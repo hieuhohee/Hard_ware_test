@@ -37,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GYRO_IDENTITY_ONLY 3 /* 0: gyro C++; 1: ID C++; 2: SPI/I2C C++; 3: ID C thuần. */
+#define GYRO_IDENTITY_ONLY 4 /* 0: gyro C++; 1/2: probe C++; 3: ID C; 4: rà cấu hình C. */
 
 /* USER CODE END PD */
 
@@ -92,6 +92,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+#if GYRO_IDENTITY_ONLY >= 3
+  MX_SPI2_Init(); /* Bài C chỉ khởi tạo GPIO/SPI, loại ảnh hưởng ADC/TIM/UART. */
+#else
   MX_ADC1_Init();
   MX_SPI2_Init();
   MX_TIM3_Init();
@@ -99,10 +102,14 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM8_Init();
   MX_USART3_UART_Init();
+#endif
   /* USER CODE BEGIN 2 */
   test_started = 0; /* Giữ biến trạng thái trong ELF để Watch đọc đúng ở mode chẩn đoán. */
-#if GYRO_IDENTITY_ONLY == 3
+#if GYRO_IDENTITY_ONLY >= 3
   IcmC_Begin(); /* Bài test C độc lập; không gọi Begin/driver C++ trước bài này. */
+#if GYRO_IDENTITY_ONLY == 4
+  IcmC_ConfigAudit(); /* Dò cấu hình một lần, khôi phục nếu không có ID12 ổn định. */
+#endif
 #elif GYRO_IDENTITY_ONLY
   HardwareTests_ReadOnlyGyroProbe(); /* Không gọi Begin trước bài chỉ đọc. */
 #if GYRO_IDENTITY_ONLY == 2
@@ -128,7 +135,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-#if GYRO_IDENTITY_ONLY == 3
+#if GYRO_IDENTITY_ONLY >= 3
     IcmC_Poll(); /* Chỉ kiểm tra ID, xem biến icm_c trong Watch. */
 #else
     HardwareTests_Update();

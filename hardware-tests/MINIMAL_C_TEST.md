@@ -1,5 +1,8 @@
 # Test ID ICM bằng C thuần — 10/10/2026
 
+Cập nhật mới: [CONFIG_AUDIT.md](CONFIG_AUDIT.md). Main hiện mode4 để rà
+36 cấu hình và chỉ khởi tạo GPIO/SPI; dữ liệu mode3 bên dưới là phiên trước.
+
 Theo sự cho phép của người dùng, đã thêm bài test C độc lập để đối chiếu
 với bài C++. Không chuyển cả project PID/test sang C và không sửa chân.
 Lỗi hiển thị cstring đã hết theo xác nhận của người dùng; vấn đề còn lại

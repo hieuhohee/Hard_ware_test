@@ -2,6 +2,7 @@
 #include "spi.h"
 
 volatile IcmC_Diagnostics icm_c;
+volatile IcmC_ConfigDiagnostics icm_c_config;
 static uint32_t last_poll;
 
 /* Chính xác hai byte: địa chỉ | bit READ, rồi dummy để tạo 8 clock dữ liệu.
@@ -82,4 +83,75 @@ void IcmC_Poll(void) {
     icm_c.current_id = value;
     ++icm_c.reads;
     if (!ok || value != 0x12) icm_c.id_ok = 0;
+}
+
+/* Hai yếu tố khác baudrate: OSPEEDR quyết định độ dốc cạnh SCK/MOSI,
+   PUPDR ở MISO giúp thử ảnh hưởng mức nghỉ/floating. Pull nội không phải
+   cách sửa đường dây đứt; ID12 vẫn phải ổn định mới chọn cấu hình. */
+void IcmC_ConfigAudit(void) {
+    volatile unsigned char *bytes = (volatile unsigned char *)&icm_c_config;
+    for (unsigned i = 0; i < sizeof(icm_c_config); ++i) bytes[i] = 0;
+    const SPI_InitTypeDef original = hspi2.Init;
+    const uint32_t original_speed = GPIOB->OSPEEDR, original_pull = GPIOB->PUPDR;
+    const uint32_t speed_mask = (3u << 26) | (3u << 28) | (3u << 30);
+    const uint32_t divider[] = {SPI_BAUDRATEPRESCALER_64,
+        SPI_BAUDRATEPRESCALER_128, SPI_BAUDRATEPRESCALER_256};
+    unsigned selected = 36;
+    icm_c_config.pclk1_hz = HAL_RCC_GetPCLK1Freq();
+    icm_c_config.pclk2_hz = HAL_RCC_GetPCLK2Freq();
+    icm_c_config.hclk_hz = HAL_RCC_GetHCLKFreq();
+    icm_c_config.rcc_cr = RCC->CR;
+    icm_c_config.rcc_pllcfgr = RCC->PLLCFGR; icm_c_config.rcc_cfgr = RCC->CFGR;
+    for (unsigned row = 0; row < 36; ++row) {
+        unsigned mode = row / 18, div = (row / 6) % 3;
+        unsigned speed = (row / 3) % 2, pull = row % 3;
+        volatile IcmC_ConfigTrial *t = &icm_c_config.trial[row];
+        t->mode = mode ? 3 : 0; t->divider = 64u << div;
+        t->speed = speed ? 3 : 0; t->pull = pull;
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+        hspi2.Init = original;
+        hspi2.Init.CLKPolarity = mode ? SPI_POLARITY_HIGH : SPI_POLARITY_LOW;
+        hspi2.Init.CLKPhase = mode ? SPI_PHASE_2EDGE : SPI_PHASE_1EDGE;
+        hspi2.Init.BaudRatePrescaler = divider[div];
+        if (HAL_SPI_Init(&hspi2) != HAL_OK) { ++t->errors; continue; }
+        GPIOB->OSPEEDR = (original_speed & ~speed_mask) | (speed ? speed_mask : 0);
+        GPIOB->PUPDR = (original_pull & ~(3u << 28)) | (pull << 28);
+        HAL_Delay(2);
+        uint8_t value = 0, dummy = 0;
+        if (!disable_i2c() || !read_register(0x70, &value, &dummy)) ++t->errors;
+        t->interface_value = value;
+        for (unsigned i = 0; i < 8; ++i) {
+            value = 0;
+            if (!read_register(0x75, &value, &dummy)) ++t->errors;
+            else if (value == 0x12) ++t->matches;
+            t->id[i] = value; HAL_Delay(1);
+        }
+        if (t->matches == 8 && !t->errors && t->interface_value == 0x40 && selected == 36)
+            selected = row;
+    }
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+    hspi2.Init = original;
+    GPIOB->OSPEEDR = original_speed; GPIOB->PUPDR = original_pull;
+    if (selected < 36) {
+        unsigned mode = selected / 18, div = (selected / 6) % 3;
+        unsigned speed = (selected / 3) % 2, pull = selected % 3;
+        hspi2.Init.CLKPolarity = mode ? SPI_POLARITY_HIGH : SPI_POLARITY_LOW;
+        hspi2.Init.CLKPhase = mode ? SPI_PHASE_2EDGE : SPI_PHASE_1EDGE;
+        hspi2.Init.BaudRatePrescaler = divider[div];
+        GPIOB->OSPEEDR = (original_speed & ~speed_mask) | (speed ? speed_mask : 0);
+        GPIOB->PUPDR = (original_pull & ~(3u << 28)) | (pull << 28);
+        icm_c_config.selected = selected + 1;
+    }
+    icm_c_config.restore_ok = HAL_SPI_Init(&hspi2) == HAL_OK;
+    icm_c_config.gpio_speed = GPIOB->OSPEEDR;
+    icm_c_config.gpio_pull = GPIOB->PUPDR; icm_c_config.spi_cr1 = SPI2->CR1;
+    icm_c_config.done = 1;
+    /* Nếu có candidate mới, yêu cầu16/16 ID nữa trước khi công bố id_ok. */
+    if (selected < 36 && icm_c_config.restore_ok) {
+        uint8_t value = 0, dummy = 0;
+        icm_c.matches_after = 0; identity_samples(1);
+        icm_c.interface_after = read_register(0x70, &value, &dummy) ? value : 0;
+        icm_c.id_ok = icm_c.matches_after == 16 && icm_c.interface_after == 0x40;
+    } else icm_c.id_ok = 0;
+    last_poll = HAL_GetTick();
 }
