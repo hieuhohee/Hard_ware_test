@@ -10,6 +10,7 @@ static_assert(kMotorPulseMs > 0 && kMotorPulseMs <= 500, "Bench pulse must be at
 volatile Live live{};
 volatile IdentityReadOnly readonly_probe{};
 volatile SpiRoundTrip bus_probe{};
+volatile I2cIdentity i2c_probe{};
 volatile uint8_t command = 0;
 static uint32_t motor_started, last_report, last_imu, last_encoder;
 static uint32_t old_count[2];
@@ -241,6 +242,98 @@ static void read_only_identity() {
         readonly_probe.values[i]=value;
     }
     readonly_probe.done=1; // Hoàn tất phép đọc, KHÔNG có nghĩa ID đúng.
+}
+static void probe_i2c_identity() {
+    stop_everything(); live.imu_ready=0;
+    volatile uint8_t* bytes=reinterpret_cast<volatile uint8_t*>(&i2c_probe);
+    for(unsigned i=0;i<sizeof(i2c_probe);++i) bytes[i]=0;
+#if defined(STM32F405xx)
+    if(!imu_spi || imu_spi->Instance!=SPI2 || imu_cs.port!=GPIOB || imu_cs.pin!=GPIO_PIN_12) return;
+    uint8_t interface=0;
+    if(!spi_read(0x70,&interface,1)) { i2c_probe.status=2; return; }
+    if(interface&0x40) { i2c_probe.status=3; return; }
+    // Không disable SPI bằng lệnh tới sensor: CS HIGH chọn giao diện I2C.
+    // SDA/SCL chỉ kéo LOW hoặc thả, không đẩy HIGH vào ngõ ra sensor.
+    const uint32_t mode=GPIOB->MODER, type=GPIOB->OTYPER, pull=GPIOB->PUPDR;
+    const uint32_t output=GPIOB->ODR, cr1=SPI2->CR1;
+    const uint32_t debug=CoreDebug->DEMCR, dwt_ctrl=DWT->CTRL;
+    const uint32_t scl=GPIO_PIN_13, sda=GPIO_PIN_15;
+    pin(imu_cs,true); __HAL_SPI_DISABLE(imu_spi);
+    GPIOB->BSRR=scl|sda;
+    GPIOB->OTYPER=type|scl|sda;
+    GPIOB->PUPDR=(pull & ~((3u<<26)|(3u<<28)|(3u<<30))) | (1u<<26)|(2u<<28)|(1u<<30);
+    GPIOB->MODER=(mode & ~((3u<<26)|(3u<<28)|(3u<<30))) | (1u<<26)|(1u<<30);
+    CoreDebug->DEMCR|=CoreDebug_DEMCR_TRCENA_Msk; DWT->CTRL|=DWT_CTRL_CYCCNTENA_Msk;
+    bool ok=true;
+    auto delay=[&](unsigned us) {
+        const uint32_t start=DWT->CYCCNT;
+        unsigned guard=100000;
+        while(uint32_t(DWT->CYCCNT-start)<us*(SystemCoreClock/1000000u) && --guard) {}
+        if(!guard) ok=false;
+    };
+    auto line=[](uint32_t p,bool release) { GPIOB->BSRR=release?p:p<<16; };
+    auto clock_high=[&]() {
+        line(scl,true);
+        const uint32_t start=DWT->CYCCNT;
+        unsigned guard=100000;
+        while(!(GPIOB->IDR&scl) && --guard && uint32_t(DWT->CYCCNT-start)<SystemCoreClock/1000u) {}
+        if(!(GPIOB->IDR&scl)) ok=false;
+        delay(5); // Khoảng 100 kHz hoặc chậm hơn; hỗ trợ clock stretching.
+    };
+    auto start=[&]() {
+        line(sda,true); delay(5); clock_high();
+        if(!(GPIOB->IDR&sda)) ok=false;
+        line(sda,false); delay(5); line(scl,false); delay(5);
+    };
+    auto stop=[&]() {
+        line(scl,false); line(sda,false); delay(5); clock_high();
+        line(sda,true); delay(5);
+    };
+    auto write_byte=[&](uint8_t value) {
+        for(unsigned bit=0;bit<8;++bit) {
+            line(sda,(value&0x80)!=0); value=uint8_t(value<<1);
+            delay(5); clock_high(); line(scl,false); delay(5);
+        }
+        line(sda,true); delay(5); clock_high();
+        const bool ack=(GPIOB->IDR&sda)==0;
+        line(scl,false); delay(5); return ack && ok;
+    };
+    auto read_byte=[&]() {
+        uint8_t value=0; line(sda,true);
+        for(unsigned bit=0;bit<8;++bit) {
+            delay(5); clock_high(); value=uint8_t((value<<1)|((GPIOB->IDR&sda)?1:0));
+            line(scl,false); delay(5);
+        }
+        // Một byte cuối: master gửi NACK rồi STOP, không kéo SDA LOW.
+        line(sda,true); delay(5); clock_high(); line(scl,false); delay(5);
+        return value;
+    };
+    delay(10);
+    for(unsigned row=0;row<2 && ok;++row) {
+        const uint8_t address=uint8_t(0x68+row);
+        start(); const bool ack=write_byte(uint8_t(address<<1)); stop();
+        i2c_probe.ack[row]=ack;
+        if(!ack) continue;
+        i2c_probe.address=address;
+        for(unsigned i=0;i<8 && ok;++i) {
+            start();
+            bool transfer=write_byte(uint8_t(address<<1)) && write_byte(0x75);
+            if(transfer) { start(); transfer=write_byte(uint8_t((address<<1)|1)); }
+            if(transfer) {
+                const uint8_t id=read_byte(); i2c_probe.id[i]=id; ++i2c_probe.reads;
+                if(id==0x12 && ok) ++i2c_probe.matches;
+            }
+            stop(); if(!transfer) ok=false;
+        }
+        break;
+    }
+    stop();
+    // Khôi phục cả điện trở kéo, output latch và AF; không để board ở I2C.
+    GPIOB->BSRR=(output&(scl|sda)) | ((~output&(scl|sda))<<16);
+    GPIOB->PUPDR=pull; GPIOB->OTYPER=type; GPIOB->MODER=mode; SPI2->CR1=cr1;
+    DWT->CTRL=dwt_ctrl; CoreDebug->DEMCR=debug;
+    i2c_probe.status=!ok?2:(i2c_probe.reads==8?1:4);
+#endif
 }
 static bool imu_bus_failed() { imu_step(ImuInitStep::BusError); return false; }
 static bool imu_init() {
@@ -632,6 +725,7 @@ extern "C" uint8_t HardwareTests_TestGyro() { return bench::start_sensors(false,
 extern "C" uint8_t HardwareTests_ProbeGyroSpi() { return bench::probe_gyro_spi(); }
 extern "C" void HardwareTests_ReadOnlyGyroProbe() { bench::read_only_identity(); }
 extern "C" void HardwareTests_ProbeGyroBus() { bench::probe_spi_roundtrip(); }
+extern "C" void HardwareTests_ProbeGyroI2c() { bench::probe_i2c_identity(); }
 extern "C" uint8_t HardwareTests_TestAllSensors() { return bench::start_sensors(true,true,true,false); }
 extern "C" uint8_t HardwareTests_CalibrateGyro() { return bench::start_sensors(false,false,true,true); }
 extern "C" uint8_t HardwareTests_TestMotorLeft(int direction) { return bench::start_motor(0,direction); }

@@ -103,6 +103,7 @@ int main(void)
   HardwareTests_ReadOnlyGyroProbe(); /* Không gọi Begin trước bài chỉ đọc. */
 #if GYRO_IDENTITY_ONLY == 2
   HardwareTests_ProbeGyroBus(); /* Ghi divider tạm thời rồi khôi phục, không bật gyro. */
+  HardwareTests_ProbeGyroI2c(); /* Đối chiếu ID độc lập qua I2C, sau đó trả pin về SPI. */
 #endif
 #else
   HardwareTests_Begin();

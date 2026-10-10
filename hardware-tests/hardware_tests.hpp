@@ -62,6 +62,13 @@ struct SpiRoundTrip {
     uint8_t tx[3][7], rx[3][7]; // Hai dummy khác nhau và một gói burst dài.
 };
 extern volatile SpiRoundTrip bus_probe;
+struct I2cIdentity {
+    // status: 0 chưa chạy/không hỗ trợ, 1 xong, 2 lỗi đường/timing,
+    // 3 I2C đang bị disable, 4 không có địa chỉ ACK.
+    uint32_t status, address, reads, matches;
+    uint8_t ack[2], id[8];
+};
+extern volatile I2cIdentity i2c_probe;
 // Ghi mã ASCII vào command trong debugger: '1'=49, 'i'=105, 's'=115...
 // Không tự chạy motor sau khởi động. Init/ poll chỉ gọi từ luồng main.
 extern volatile uint8_t command;
