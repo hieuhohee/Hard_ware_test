@@ -1,7 +1,10 @@
 # Test ID ICM bằng C thuần — 10/10/2026
 
-Cập nhật mới: [CONFIG_AUDIT.md](CONFIG_AUDIT.md). Main hiện mode4 để rà
-36 cấu hình và chỉ khởi tạo GPIO/SPI; dữ liệu mode3 bên dưới là phiên trước.
+Cập nhật mới: [GYRO_UNVERIFIED_TEST.md](GYRO_UNVERIFIED_TEST.md). Theo yêu cầu
+người dùng, main hiện mode5 thử dữ liệu gyro dù ID sai; đã nạp/đọc được mẫu.
+[CONFIG_AUDIT.md](CONFIG_AUDIT.md) là lần rà36 cấu hình trước đó. Các số liệu
+mode3 và kết luận không bật gyro bên dưới thuộc phiên trước khi được cho
+phép bypass ID, không mô tả chế độ đang chạy hiện tại.
 
 Theo sự cho phép của người dùng, đã thêm bài test C độc lập để đối chiếu
 với bài C++. Không chuyển cả project PID/test sang C và không sửa chân.
@@ -13,7 +16,7 @@ là ID cảm biến không đúng, không phải ký tự trong Watch.
 - `cubemx/micromouse_hwtest/Core/Src/icm20602_minimal_c.c`: triển khai C,
   gọi trực tiếp HAL_SPI và GPIO; không gọi hardware_tests.cpp/test_config.cpp.
 - `Core/Inc/icm20602_minimal_c.h`: API C và cấu trúc chẩn đoán toàn số32-bit.
-- main.c hiện `GYRO_IDENTITY_ONLY=3`, gọi `IcmC_Begin()` một lần sau MX_*_Init,
+- Ở mode3, main đặt `GYRO_IDENTITY_ONLY=3`, gọi `IcmC_Begin()` sau MX_*_Init,
   rồi `IcmC_Poll()` trong while. Không UART/menu hoặc tự chạy motor.
 - CMakeLists.txt thêm source.c; cấu hình C/C++ chung giữ nguyên để các bài cũ
   vẫn build được. ELF thực tế ở mode3 không có symbol bench::/HardwareTests_*:

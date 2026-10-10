@@ -37,7 +37,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GYRO_IDENTITY_ONLY 4 /* 0: gyro C++; 1/2: probe C++; 3: ID C; 4: rà cấu hình C. */
+#define GYRO_IDENTITY_ONLY 5 /* 0: gyro C++; 1/2: probe C++; 3: ID C; 4: rà cấu hình C;
+                              5: thử gyro C dù ID sai, xem icm_c_gyro. */
 
 /* USER CODE END PD */
 
@@ -105,7 +106,9 @@ int main(void)
 #endif
   /* USER CODE BEGIN 2 */
   test_started = 0; /* Giữ biến trạng thái trong ELF để Watch đọc đúng ở mode chẩn đoán. */
-#if GYRO_IDENTITY_ONLY >= 3
+#if GYRO_IDENTITY_ONLY == 5
+  test_started = IcmC_GyroBeginUnverified(); /* Chỉ kết quả readback, chưa xác nhận IMU. */
+#elif GYRO_IDENTITY_ONLY >= 3
   IcmC_Begin(); /* Bài test C độc lập; không gọi Begin/driver C++ trước bài này. */
 #if GYRO_IDENTITY_ONLY == 4
   IcmC_ConfigAudit(); /* Dò cấu hình một lần, khôi phục nếu không có ID12 ổn định. */
@@ -135,7 +138,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-#if GYRO_IDENTITY_ONLY >= 3
+#if GYRO_IDENTITY_ONLY == 5
+    IcmC_GyroPollUnverified(); /* Bài bench: dữ liệu gyro, ID thực vẫn được giữ lại. */
+#elif GYRO_IDENTITY_ONLY >= 3
     IcmC_Poll(); /* Chỉ kiểm tra ID, xem biến icm_c trong Watch. */
 #else
     HardwareTests_Update();

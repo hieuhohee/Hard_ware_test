@@ -10,3 +10,15 @@ else()
 endif()
 enable_testing()
 add_test(NAME bench_logic COMMAND bench_host)
+
+# C probe chạy bằng cùng source dùng trên F405; chỉ HAL được thay bằng mock.
+add_executable(gyro_c_host minimal_c/gyro_test.c
+  ../cubemx/micromouse_hwtest/Core/Src/icm20602_minimal_c.c)
+target_include_directories(gyro_c_host PRIVATE minimal_c
+  ../cubemx/micromouse_hwtest/Core/Inc)
+if(MSVC)
+  target_compile_options(gyro_c_host PRIVATE /W4 /utf-8 /UNDEBUG)
+else()
+  target_compile_options(gyro_c_host PRIVATE -Wall -Wextra -Wpedantic -UNDEBUG)
+endif()
+add_test(NAME gyro_unverified_logic COMMAND gyro_c_host)

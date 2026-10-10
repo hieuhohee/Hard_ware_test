@@ -1,5 +1,9 @@
 # Rà soát cấu hình IMU — 10/10/2026
 
+Cập nhật sau bài rà: [GYRO_UNVERIFIED_TEST.md](GYRO_UNVERIFIED_TEST.md).
+Đã thử gyro theo yêu cầu bỏ chặn ID, readback đạt và dữ liệu cập nhật.
+Main hiện mode5; kết quả nhận dạng của bài mode4 bên dưới vẫn giữ nguyên.
+
 **Kết quả:** cấu hình SPI/clock/pin đang khai báo hợp lệ cho ICM20602.
 Đã chạy firmware C chỉ dùng GPIO/SPI và dò36 cấu hình;288/288 ID đều0x2E,
 0 mẫu0x12. Chưa đạt nhận dạng/đọc gyro hợp lệ, không công bố test gyro xong.

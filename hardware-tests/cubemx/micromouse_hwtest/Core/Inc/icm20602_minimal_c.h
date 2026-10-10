@@ -39,6 +39,32 @@ void IcmC_Begin(void);
    Không UART, không menu, không motor, không đọc accel hoặc gyro. */
 void IcmC_Poll(void);
 
+/* Chế độ bench được phép bỏ chặn ID theo yêu cầu người dùng. Không sửa ID
+   trả về và không xác nhận loại chip. Mọi byte/số đếm công khai là 32-bit,
+   tránh lỗi debugger giải mã uint8_t thành ký tự. raw[] là signed counts;
+   dps_assumed[] chỉ đúng nếu chip có thang đo tương thích ICM20602. */
+typedef struct {
+    uint32_t done, init_step, id_read_ok, actual_id, id_unverified;
+    uint32_t bypass_requested, configured, hal_status, io_errors;
+    uint32_t config_mismatches, reg[9], expected[9], actual[9], read_ok[9];
+    uint32_t polls, data_ready, forced_reads, samples, changed_samples;
+    uint32_t last_status, last_sample_ms, last_poll_ms, max_poll_gap_ms;
+    uint32_t zero_frames, saturated_frames, history_next;
+    int32_t raw[3], minimum[3], maximum[3];
+    float dps_assumed[3];
+    /* Vòng lịch sử 32 lần đọc, mỗi dòng: tick(ms), fresh, X, Y, Z.
+       fresh=1 khi INT_STATUS bit0 bật; fresh=0 là đọc cưỡng bức chẩn đoán. */
+    int32_t history[32][5];
+} IcmC_GyroDiagnostics;
+extern volatile IcmC_GyroDiagnostics icm_c_gyro;
+/* Gọi một lần, sau GPIO/SPI2. Reset và cấu hình gyro XYZ, accel standby.
+   Trả về kết quả readback cấu hình, KHÔNG phải xác nhận đúng loại chip. */
+uint32_t IcmC_GyroBeginUnverified(void);
+/* Gọi liên tục trong while; poll tối thiểu 5ms (~200Hz bench), gyro được
+   yêu cầu ODR1kHz. Không FIFO: không cam kết thu đủ từng mẫu ở ODR1kHz.
+   Nếu chưa Data Ready, mỗi100ms vẫn đọc raw nhưng không tăng samples. */
+void IcmC_GyroPollUnverified(void);
+
 #ifdef __cplusplus
 }
 #endif
