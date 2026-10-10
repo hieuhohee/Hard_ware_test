@@ -160,6 +160,27 @@ static void test_quality_log(void) {
     unsigned last = (icm_c_quality.history_next + 63) % 64;
     assert(icm_c_quality.events[last][3] == 32639); /* Journal wrap vẫn đúng. */
 }
+static void test_whoami_watch(void) {
+    reset_fixture(0x2E);
+    assert(IcmC_GyroBeginUnverified() == 1);
+    assert(icm_c_whoami.reg_addr == 0x75 && icm_c_whoami.spi_read_cmd == 0xF5);
+    assert(icm_c_whoami.expected == 0x12 && icm_c_whoami.value == 0x2E);
+    assert(icm_c_whoami.tx[0] == 0xF5 && icm_c_whoami.tx[1] == 0);
+    assert(icm_c_whoami.rx[0] == 0xFF && icm_c_whoami.rx[1] == 0x2E);
+    uint32_t reads = icm_c_whoami.reads;
+    supply_sample(1, 2, 3, 1);
+    assert(icm_c_whoami.reads == reads); /* Không đọc ID mỗi mẫu gyro. */
+    tick += 1000; supply_sample(1, 2, 3, 1);
+    assert(icm_c_whoami.reads == reads + 1 && icm_c_gyro.samples == 2);
+    registers[0x75] = 0x12;
+    assert(IcmC_ReadWhoAmI() == 1 && icm_c_whoami.changed == 1);
+    assert(icm_c_whoami.matches == 1 && icm_c_gyro.id_unverified == 0);
+    timeout_next = 1;
+    assert(IcmC_ReadWhoAmI() == 0 && icm_c_whoami.read_errors == 1);
+    assert(icm_c_whoami.value == 0x12 && !icm_c_whoami.read_ok);
+    assert(icm_c_gyro.id_unverified == 1 && icm_c_whoami.hal_status == HAL_TIMEOUT);
+    assert(icm_c_whoami.history_ok[3] == 0 && id_writes == 0);
+}
 int main(void) {
     reset_fixture(0x2E);
     assert(IcmC_GyroBeginUnverified() == 1);
@@ -194,6 +215,7 @@ int main(void) {
     assert(icm_c_gyro.actual_id == 0x12 && id_writes == 0);
     test_angles();
     test_quality_log();
+    test_whoami_watch();
     puts("PASS: gyro diagnostics, bias, quaternion/Euler, timestamp, gaps, quality log");
     return 0;
 }

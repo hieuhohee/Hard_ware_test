@@ -57,6 +57,21 @@ typedef struct {
     int32_t history[32][5];
 } IcmC_GyroDiagnostics;
 extern volatile IcmC_GyroDiagnostics icm_c_gyro;
+/* Đọc WHO_AM_I độc lập để xem trên Live Watch cùng gyro/góc.
+   reg_addr=0x75 là địa chỉ register; value là ID chip trả về. Không phải
+   địa chỉ I2C. TX[0]=0xF5 (0x75|READ), RX[1] mới là ID, RX[0] là dummy.
+   Mọi trường32-bit để debugger không giải mã byte như ký tự/string. */
+typedef struct {
+    uint32_t reg_addr, spi_read_cmd, expected, value, read_ok, hal_status;
+    uint32_t reads, matches, read_errors, changed, last_read_ms, history_next;
+    uint32_t tx[2], rx[2], history[16], history_ok[16];
+} IcmC_WhoAmIDiagnostics;
+extern volatile IcmC_WhoAmIDiagnostics icm_c_whoami;
+/* Đã được Begin gọi một lần và Poll gọi mỗi1000ms. Có thể gọi thủ công
+   sau GyroBegin, trong main context, không trong ISR/song song SPI.
+   Không ghi WHO_AM_I hay reset chip; return1 chỉ có nghĩa HAL đọc thành công.
+   Khi lỗi, value giữ ID thành công gần nhất; phải xem read_ok và read_errors. */
+uint32_t IcmC_ReadWhoAmI(void);
 /* Gọi một lần, sau GPIO/SPI2. Reset và cấu hình gyro XYZ, accel standby.
    Trả về kết quả readback cấu hình, KHÔNG phải xác nhận đúng loại chip. */
 uint32_t IcmC_GyroBeginUnverified(void);

@@ -7,6 +7,7 @@ volatile IcmC_ConfigDiagnostics icm_c_config;
 volatile IcmC_GyroDiagnostics icm_c_gyro;
 volatile IcmC_AngleDiagnostics icm_c_angles;
 volatile IcmC_QualityDiagnostics icm_c_quality;
+volatile IcmC_WhoAmIDiagnostics icm_c_whoami;
 static uint32_t last_poll;
 static uint32_t angle_calibration_start, angle_previous_ms, angle_previous_valid;
 static uint32_t angle_previous_clock, gyro_previous_clock, no_data_latched;
@@ -222,9 +223,41 @@ static int gyro_read(uint8_t reg, uint8_t *out, unsigned count) {
     gyro_cs_guard();
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
     icm_c_gyro.hal_status = (uint32_t)status;
+    if (reg == 0x75 && count == 1) {
+        for (unsigned i = 0; i < 2; ++i) {
+            icm_c_whoami.tx[i] = tx[i]; icm_c_whoami.rx[i] = rx[i];
+        }
+    }
     if (status != HAL_OK) { ++icm_c_gyro.io_errors; return 0; }
     for (unsigned i = 0; i < count; ++i) out[i] = rx[i + 1];
     return 1;
+}
+
+uint32_t IcmC_ReadWhoAmI(void) {
+    uint8_t value = 0;
+    uint32_t ok = (uint32_t)gyro_read(0x75, &value, 1);
+    icm_c_whoami.reg_addr = 0x75;
+    icm_c_whoami.spi_read_cmd = 0xF5;
+    icm_c_whoami.expected = 0x12;
+    icm_c_whoami.read_ok = ok;
+    icm_c_whoami.hal_status = icm_c_gyro.hal_status;
+    icm_c_whoami.last_read_ms = HAL_GetTick();
+    ++icm_c_whoami.reads;
+    unsigned row = icm_c_whoami.history_next;
+    icm_c_whoami.history[row] = value;
+    icm_c_whoami.history_ok[row] = ok;
+    icm_c_whoami.history_next = (row + 1) % 16;
+    if (ok) {
+        /* Chỉ so hai ID đọc THÀNH CÔNG; lần đọc lỗi không giả làm ID00. */
+        if (icm_c_whoami.reads > icm_c_whoami.read_errors + 1 &&
+            value != icm_c_whoami.value) ++icm_c_whoami.changed;
+        icm_c_whoami.value = value;
+        icm_c_gyro.actual_id = value;
+        if (value == 0x12) ++icm_c_whoami.matches;
+    } else ++icm_c_whoami.read_errors;
+    icm_c_gyro.id_read_ok = ok;
+    icm_c_gyro.id_unverified = !ok || value != 0x12;
+    return ok; /* Không đổi ID sai thành12 và không chặn bài gyro bypass. */
 }
 
 uint32_t IcmC_GyroBeginUnverified(void) {
@@ -235,6 +268,8 @@ uint32_t IcmC_GyroBeginUnverified(void) {
     for (unsigned i = 0; i < sizeof(icm_c_angles); ++i) bytes[i] = 0;
     bytes = (volatile unsigned char *)&icm_c_quality;
     for (unsigned i = 0; i < sizeof(icm_c_quality); ++i) bytes[i] = 0;
+    bytes = (volatile unsigned char *)&icm_c_whoami;
+    for (unsigned i = 0; i < sizeof(icm_c_whoami); ++i) bytes[i] = 0;
 #if defined(__arm__) || defined(__thumb__)
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -255,10 +290,7 @@ uint32_t IcmC_GyroBeginUnverified(void) {
     gyro_write(0x6B, 0x80);
     HAL_Delay(100);
     gyro_write(0x70, 0x40);
-    uint8_t id = 0;
-    icm_c_gyro.id_read_ok = (uint32_t)gyro_read(0x75, &id, 1);
-    icm_c_gyro.actual_id = id;
-    icm_c_gyro.id_unverified = !icm_c_gyro.id_read_ok || id != 0x12;
+    IcmC_ReadWhoAmI(); /* WHO thực và TX/RX được lưu riêng cho Live Watch. */
 
     /* Map giả định ICM20602: đánh thức, chỉ gyro; DLPF2, ODR1kHz, ±2000dps.
        Bit OUTPUT_LIMIT được set theo datasheet. INT latch, clear khi đọc
@@ -299,6 +331,10 @@ void IcmC_GyroPollUnverified(void) {
     if (gap > icm_c_gyro.max_poll_gap_ms) icm_c_gyro.max_poll_gap_ms = gap;
     icm_c_gyro.last_poll_ms = now;
     ++icm_c_gyro.polls;
+    /* Một giao dịch2byte mỗi1s; không gọi bài ID cũ có HAL_Delay dài.
+       Timestamp góc vẫn lấy tại lúc burst gyro xong, gồm thời gian giao dịch này. */
+    if ((uint32_t)(now - icm_c_whoami.last_read_ms) >= 1000)
+        IcmC_ReadWhoAmI();
     uint8_t status = 0;
     if (!gyro_read(0x3A, &status, 1)) {
         ++icm_c_quality.read_failures; quality_event(now, 16); angles_gap(); return;

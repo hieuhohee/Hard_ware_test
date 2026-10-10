@@ -41,6 +41,9 @@ Main tự gọi hiệu chuẩn2000 mẫu sau khởi tạo; trong while vẫn ch�
    icm_c_angles.corrected_dps
    icm_c_angles.tracking_continuous
    icm_c_gyro.io_errors
+   icm_c_whoami.value
+   icm_c_whoami.read_ok
+   icm_c_whoami.reads
    ```
 
 5. Xoay chậm từng trục rồi xoay ngược. Xem các góc trong bảng bên dưới.
@@ -49,6 +52,38 @@ Main tự gọi hiệu chuẩn2000 mẫu sau khởi tạo; trong while vẫn ch�
 6. Với mouse chạy trên mặt phẳng, gắn trục Z của IMU gần vuông góc mặt sàn:
    theo dõi `yaw_deg` khi quay trái/phải. Chiều tăng phụ thuộc hướng gắn và
    quy ước trục; kiểm tra thực nghiệm trước khi đưa vào PID quay90°.
+
+### Xem lại WHO_AM_I cùng góc
+
+Main mode5 đã tự đọc WHO_AM_I lúc khởi tạo và mỗi1giây trong Poll. Không
+cần sửa while hoặc gọi bài ID cũ. Thêm vào STM32Cube Live Watch:
+
+```text
+icm_c_whoami.reg_addr
+icm_c_whoami.value
+icm_c_whoami.expected
+icm_c_whoami.read_ok
+icm_c_whoami.hal_status
+icm_c_whoami.reads
+icm_c_whoami.read_errors
+icm_c_whoami.changed
+icm_c_whoami.history
+```
+
+`reg_addr=117` chính là địa chỉ register0x75; `value=46` là ID0x2E nếu
+đọc được như các lần trước; `expected=18` là ID0x12 theo datasheet ICM20602.
+WHO_AM_I không phải địa chỉ I2C0x68/0x69. Bài hiện tại dùng SPI2, CS PB12.
+
+`tx[0]=245` tương ứng0xF5 (0x75|0x80); `rx[1]` là payload ID, `rx[0]` là
+dummy. Tất cả byte hiển thị kiểu số32-bit. Nếu read_ok0, value giữ ID thành
+công gần nhất, không phải kết quả hợp lệ của lần vừa lỗi. Xem read_errors
+và history_ok cùng history để tránh hiểu byte0 khi lỗi như ID thật.
+
+Có thể gọi `IcmC_ReadWhoAmI()` một lần sau GyroBegin nếu muốn đọc ngay;
+return1 chỉ có nghĩa giao dịch HAL thành công, không mặc định ID đúng.
+Không gọi từ ISR hoặc cùng lúc với giao dịch SPI khác. Hàm không reset,
+không ghi WHO_AM_I và không bỏ bài gyro/góc. Địa chỉ/ID tham khảo từ
+[datasheet TDK ICM20602](https://product.tdk.com/system/files/dam/doc/product/sensor/mortion-inertial/imu/data_sheet/ds-000176-icm-20602-v1.1.pdf).
 
 | Đại lượng | Ý nghĩa | Đơn vị / phạm vi hiển thị |
 |---|---|---|
