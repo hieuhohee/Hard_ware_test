@@ -1,5 +1,10 @@
 # Test gyro tạm thời dù WHO_AM_I sai — 10/10/2026
 
+Đã bổ sung góc tương đối roll/pitch/yaw và hiệu chuẩn bias tự động:
+[LIVEWATCH_ANGLES.md](LIVEWATCH_ANGLES.md). Main mode5 hiện gọi thêm
+`IcmC_AnglesStartCalibration(400)`; Poll cập nhật `icm_c_angles`.
+Các snapshot/số liệu kích thước và địa chỉ dưới đây thuộc bản trước thêm góc.
+
 **Đã nạp và đọc được dữ liệu trên bo F405 thật.** Theo yêu cầu người dùng,
 bài bench mode5 bỏ chặn khởi tạo theo ID, nhưng vẫn lưu ID thực `0x2E`
 và `id_unverified=1`. Đây là kiểm tra khả năng cấu hình/đọc gyro theo map

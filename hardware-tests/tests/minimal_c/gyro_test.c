@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 GPIO_TypeDef fake_gpio;
 SPI_TypeDef fake_spi;
@@ -59,6 +60,80 @@ static void supply_sample(int16_t x, int16_t y, int16_t z, int fresh) {
     registers[0x3A] = (uint8_t)fresh; tick += 10;
     IcmC_GyroPollUnverified();
 }
+static void prepare_angles(void) {
+    reset_fixture(0x2E);
+    assert(IcmC_GyroBeginUnverified() == 1);
+    assert(IcmC_AnglesStartCalibration(64) == 1);
+    supply_sample(16, -32, 8, 1);
+    assert(icm_c_angles.calibration_samples == 0 && !icm_c_angles.ready);
+    tick += 500;
+    for (unsigned i = 0; i < 64; ++i) supply_sample(16, -32, 8, 1);
+    assert(icm_c_angles.ready == 1 && icm_c_angles.calibration_state == 3);
+    assert(fabsf(icm_c_angles.bias_dps[0] - 16.0f/16.4f) < 1e-5f);
+    assert(icm_c_angles.noise_std_dps[0] == 0);
+}
+static void at_tick(uint32_t ms, int16_t x, int16_t y, int16_t z) {
+    tick = ms - 10; supply_sample(x, y, z, 1);
+}
+/* Gyro = bias + tốc độ biết trước, timestamp10ms chính xác (không theo số
+   lần gọi). ±90°/s trong1s phải cho±90°, không phụ thuộc bench delay HAL. */
+static void test_angles(void) {
+    prepare_angles();
+    uint32_t start = tick + 10;
+    at_tick(start, 16, -32, 1484); /* Z 90dps; mẫu đầu đặt mốc. */
+    for (unsigned i = 1; i <= 100; ++i) at_tick(start + 10*i, 16, -32, 1484);
+    assert(fabsf(icm_c_angles.yaw_deg - 90) < 0.02f);
+    assert(fabsf(icm_c_angles.roll_deg) < 0.02f && fabsf(icm_c_angles.pitch_deg) < 0.02f);
+    assert(icm_c_angles.updates == 100 && icm_c_angles.tracking_continuous == 1);
+    float norm2 = 0;
+    for (unsigned i = 0; i < 4; ++i) norm2 += icm_c_angles.quaternion[i]*icm_c_angles.quaternion[i];
+    assert(fabsf(norm2 - 1) < 1e-5f);
+    assert(IcmC_AnglesResetReference() == 1 && icm_c_angles.yaw_deg == 0);
+    assert(icm_c_angles.calibration_samples == 64 && icm_c_angles.ready);
+
+    start = tick + 10;
+    at_tick(start, 16, 1444, 8);
+    for (unsigned i = 1; i <= 50; ++i) at_tick(start + 10*i, 16, 1444, 8);
+    assert(fabsf(icm_c_angles.pitch_deg - 45) < 0.02f);
+    assert(fabsf(icm_c_angles.roll_deg) < 0.02f && fabsf(icm_c_angles.yaw_deg) < 0.02f);
+    assert(IcmC_AnglesResetReference() == 1);
+
+    /* Hai phép quay body nối tiếp không tương đương cộng Euler X rồi Y:
+       Rx90 * Ry45 có Euler ZYX gần roll90/pitch0/yaw45. */
+    start = tick + 10;
+    at_tick(start, 1492, -32, 8);
+    for (unsigned i = 1; i <= 100; ++i) at_tick(start + 10*i, 1492, -32, 8);
+    for (unsigned i = 1; i <= 50; ++i) at_tick(start + 1000 + 10*i, 16, 1444, 8);
+    assert(fabsf(icm_c_angles.roll_deg - 90) < 1);
+    assert(fabsf(icm_c_angles.pitch_deg) < 1 && fabsf(icm_c_angles.yaw_deg - 45) < 1);
+
+    uint32_t updates = icm_c_angles.updates;
+    tick += 100; supply_sample(16, 1444, 8, 1);
+    assert(icm_c_angles.updates == updates && icm_c_angles.gap_count == 1);
+    assert(!icm_c_angles.tracking_continuous);
+    assert(IcmC_AnglesResetReference() == 1);
+    supply_sample(16, -32, 8, 1);
+    updates = icm_c_angles.updates;
+    tick += 100; supply_sample(1640, 1640, 1640, 0);
+    assert(icm_c_angles.updates == updates && !icm_c_angles.tracking_continuous);
+    assert(IcmC_AnglesResetReference() == 1);
+    supply_sample(32767, 0, 0, 1);
+    assert(icm_c_angles.updates == 0 && !icm_c_angles.tracking_continuous);
+
+    /* HAL tick wrap-around không được tạo dt âm hoặc góc nhảy. */
+    assert(IcmC_AnglesResetReference() == 1);
+    start = UINT32_MAX - 50;
+    at_tick(start, 16, -32, -1468);
+    for (unsigned i = 1; i <= 10; ++i) at_tick(start + 10*i, 16, -32, -1468);
+    assert(fabsf(icm_c_angles.yaw_deg + 9) < 0.02f && icm_c_angles.gap_count == 1);
+
+    /* Không tự chấp nhận cửa sổ bias có module chuyển động. */
+    assert(IcmC_AnglesStartCalibration(32) == 1);
+    tick += 500;
+    for (unsigned i = 0; i < 32; ++i) supply_sample(i%2 ? 1640 : -1640, 0, 0, 1);
+    assert(icm_c_angles.calibration_state == 4 && !icm_c_angles.ready);
+    assert(IcmC_AnglesResetReference() == 0);
+}
 int main(void) {
     reset_fixture(0x2E);
     assert(IcmC_GyroBeginUnverified() == 1);
@@ -86,10 +161,12 @@ int main(void) {
     assert(icm_c_gyro.configured == 0 && icm_c_gyro.config_mismatches == 1);
     supply_sample(1, 2, 3, 1);
     assert(icm_c_gyro.samples == 1 && icm_c_gyro.configured == 0); /* Raw chỉ chẩn đoán. */
+    assert(IcmC_AnglesStartCalibration(32) == 0 && !icm_c_angles.ready);
 
     reset_fixture(0x12);
     assert(IcmC_GyroBeginUnverified() == 1 && icm_c_gyro.id_unverified == 0);
     assert(icm_c_gyro.actual_id == 0x12 && id_writes == 0);
-    puts("PASS: bypass identity, readback, signed burst, fresh/forced, SPI failure");
+    test_angles();
+    puts("PASS: gyro diagnostics, bias, quaternion/Euler, timestamp, gaps, reference");
     return 0;
 }

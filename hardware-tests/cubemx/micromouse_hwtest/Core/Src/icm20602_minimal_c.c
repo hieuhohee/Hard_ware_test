@@ -1,10 +1,16 @@
 #include "icm20602_minimal_c.h"
 #include "spi.h"
+#include <math.h>
 
 volatile IcmC_Diagnostics icm_c;
 volatile IcmC_ConfigDiagnostics icm_c_config;
 volatile IcmC_GyroDiagnostics icm_c_gyro;
+volatile IcmC_AngleDiagnostics icm_c_angles;
 static uint32_t last_poll;
+static uint32_t angle_calibration_start, angle_previous_ms, angle_previous_valid;
+static float angle_mean[3], angle_m2[3], angle_previous_rate[3];
+static void angles_frame(uint32_t now, uint32_t fresh, int saturated);
+static void angles_gap(void);
 
 /* Chính xác hai byte: địa chỉ | bit READ, rồi dummy để tạo 8 clock dữ liệu.
    ID là RX[1]; RX[0] chưa phải dữ liệu của register. Đây là triển khai C
@@ -192,6 +198,10 @@ static int gyro_read(uint8_t reg, uint8_t *out, unsigned count) {
 uint32_t IcmC_GyroBeginUnverified(void) {
     volatile unsigned char *bytes = (volatile unsigned char *)&icm_c_gyro;
     for (unsigned i = 0; i < sizeof(icm_c_gyro); ++i) bytes[i] = 0;
+    /* Re-init gyro làm hiệu chuẩn/góc cũ không còn hợp lệ. */
+    bytes = (volatile unsigned char *)&icm_c_angles;
+    for (unsigned i = 0; i < sizeof(icm_c_angles); ++i) bytes[i] = 0;
+    angle_previous_valid = 0;
     icm_c_gyro.bypass_requested = 1;
     icm_c_gyro.id_unverified = 1; /* Chỉ bỏ cờ này khi đọc thật được đúng ID12. */
     icm_c_gyro.init_step = 1;
@@ -248,7 +258,7 @@ void IcmC_GyroPollUnverified(void) {
     icm_c_gyro.last_poll_ms = now;
     ++icm_c_gyro.polls;
     uint8_t status = 0;
-    if (!gyro_read(0x3A, &status, 1)) return;
+    if (!gyro_read(0x3A, &status, 1)) { angles_gap(); return; }
     icm_c_gyro.last_status = status;
     uint32_t fresh = (status & 1u) != 0;
     if (fresh) ++icm_c_gyro.data_ready;
@@ -256,7 +266,7 @@ void IcmC_GyroPollUnverified(void) {
        lần đọc ấy là mẫu mới; khi không fresh chỉ đọc tối đa10 lần/giây. */
     if (!fresh && (uint32_t)(now - icm_c_gyro.last_sample_ms) < 100) return;
     uint8_t data[6];
-    if (!gyro_read(0x43, data, 6)) return;
+    if (!gyro_read(0x43, data, 6)) { angles_gap(); return; }
     int changed = 0, all_zero = 1, saturated = 0;
     unsigned row = icm_c_gyro.history_next;
     icm_c_gyro.history[row][0] = (int32_t)now;
@@ -284,4 +294,135 @@ void IcmC_GyroPollUnverified(void) {
     if (fresh) ++icm_c_gyro.samples; else ++icm_c_gyro.forced_reads;
     icm_c_gyro.last_sample_ms = now;
     icm_c_gyro.history_next = (row + 1) % 32;
+    angles_frame(now, fresh, saturated);
+}
+
+/* Ngưỡng bench để tránh hiệu chuẩn khi đang cầm/xoay module. Đây không phải
+   bộ phát hiện đứng yên tuyệt đối: quay đều chậm vẫn có thể giống bias.
+   Chỉnh sau khi đo bias/noise thực tế; không tăng ngưỡng chỉ để che lỗi. */
+#define ANGLE_CAL_SETTLE_MS 500u
+#define ANGLE_MAX_GAP_MS 50u
+#define ANGLE_MAX_BIAS_DPS 10.0f
+#define ANGLE_MAX_NOISE_DPS 1.5f
+#define ANGLE_RAD_PER_DEG 0.017453292519943295f
+#define ANGLE_DEG_PER_RAD 57.29577951308232f
+
+uint32_t IcmC_AnglesResetReference(void) {
+    if (!icm_c_angles.ready) return 0;
+    icm_c_angles.quaternion[0] = 1.0f;
+    for (unsigned i = 1; i < 4; ++i) icm_c_angles.quaternion[i] = 0;
+    icm_c_angles.roll_deg = icm_c_angles.pitch_deg = icm_c_angles.yaw_deg = 0;
+    icm_c_angles.last_dt_s = 0;
+    icm_c_angles.updates = 0;
+    icm_c_angles.tracking_continuous = 1;
+    angle_previous_valid = 0; /* Mẫu kế tiếp chỉ đặt mốc thời gian, không cộng góc. */
+    return 1;
+}
+
+uint32_t IcmC_AnglesStartCalibration(uint32_t sample_count) {
+    volatile unsigned char *bytes = (volatile unsigned char *)&icm_c_angles;
+    for (unsigned i = 0; i < sizeof(icm_c_angles); ++i) bytes[i] = 0;
+    for (unsigned i = 0; i < 3; ++i) angle_mean[i] = angle_m2[i] = 0;
+    angle_previous_valid = 0;
+    icm_c_angles.quaternion[0] = 1.0f;
+    if (!icm_c_gyro.configured) { icm_c_angles.calibration_state = 4; return 0; }
+    icm_c_angles.calibration_target = sample_count < 32 ? 32 : sample_count;
+    icm_c_angles.calibration_state = 1;
+    angle_calibration_start = HAL_GetTick();
+    return 1;
+}
+
+/* Lỗi bus/mẫu cưỡng bức/gap: không tích phân dữ liệu cũ qua đoạn bị mất.
+   Góc đã tính vẫn được giữ để quan sát nhưng continuity=0 cho tới zero lại.
+   HAL tick thường không chạy khi debugger halt: không thể phát hiện mọi
+   khoảng pause; thao tác xoay lúc pause luôn bị bỏ lỡ, cần đặt mốc lại. */
+static void angles_gap(void) {
+    angle_previous_valid = 0;
+    if (icm_c_angles.ready) {
+        ++icm_c_angles.skipped_frames;
+        icm_c_angles.tracking_continuous = 0;
+    }
+    if (icm_c_angles.calibration_state == 2) icm_c_angles.calibration_state = 4;
+}
+
+static void angles_frame(uint32_t now, uint32_t fresh, int saturated) {
+    if (!fresh || saturated || !icm_c_gyro.configured) { angles_gap(); return; }
+    uint32_t state = icm_c_angles.calibration_state;
+    if (state == 1) {
+        if ((uint32_t)(now - angle_calibration_start) < ANGLE_CAL_SETTLE_MS) return;
+        icm_c_angles.calibration_state = state = 2;
+    }
+    if (state == 2) {
+        /* Welford: trung bình và phương sai không cần lưu400 frame. Chỉ dùng
+           mẫu fresh, không đưa lần đọc cưỡng bức vào bias. */
+        uint32_t n = ++icm_c_angles.calibration_samples;
+        for (unsigned i = 0; i < 3; ++i) {
+            float rate = icm_c_gyro.dps_assumed[i];
+            float delta = rate - angle_mean[i];
+            angle_mean[i] += delta / (float)n;
+            angle_m2[i] += delta * (rate - angle_mean[i]);
+        }
+        if (n < icm_c_angles.calibration_target) return;
+        int valid = 1;
+        for (unsigned i = 0; i < 3; ++i) {
+            float variance = angle_m2[i] / (float)(n - 1);
+            float noise = sqrtf(variance > 0 ? variance : 0);
+            icm_c_angles.bias_dps[i] = angle_mean[i];
+            icm_c_angles.noise_std_dps[i] = noise;
+            if (!isfinite(angle_mean[i]) || !isfinite(noise) ||
+                fabsf(angle_mean[i]) > ANGLE_MAX_BIAS_DPS || noise > ANGLE_MAX_NOISE_DPS)
+                valid = 0;
+        }
+        icm_c_angles.calibration_state = valid ? 3 : 4;
+        icm_c_angles.ready = (uint32_t)valid;
+        if (valid) IcmC_AnglesResetReference();
+        return;
+    }
+    if (state != 3 || !icm_c_angles.ready) return;
+    float rate[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        rate[i] = icm_c_gyro.dps_assumed[i] - icm_c_angles.bias_dps[i];
+        icm_c_angles.corrected_dps[i] = rate[i];
+    }
+    if (!angle_previous_valid) {
+        angle_previous_valid = 1; angle_previous_ms = now;
+        for (unsigned i = 0; i < 3; ++i) angle_previous_rate[i] = rate[i];
+        return;
+    }
+    uint32_t dt_ms = (uint32_t)(now - angle_previous_ms);
+    angle_previous_ms = now;
+    if (!dt_ms || dt_ms > ANGLE_MAX_GAP_MS) {
+        ++icm_c_angles.gap_count; angles_gap(); return;
+    }
+    float dt = (float)dt_ms * 0.001f;
+    icm_c_angles.last_dt_s = dt;
+    float rotation[3], length2 = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        /* Trung bình hai rate lân cận (trapezoid), dùng dt ĐO ĐƯỢC, không
+           mặc định1ms theo ODR cảm biến khi MCU chỉ thu khoảng125Hz. */
+        rotation[i] = 0.5f * (angle_previous_rate[i] + rate[i]) * ANGLE_RAD_PER_DEG * dt;
+        angle_previous_rate[i] = rate[i]; length2 += rotation[i] * rotation[i];
+    }
+    float length = sqrtf(length2);
+    float dw = cosf(0.5f * length);
+    float scale = length < 1e-6f ? 0.5f : sinf(0.5f * length) / length;
+    float dx = rotation[0] * scale, dy = rotation[1] * scale, dz = rotation[2] * scale;
+    float w = icm_c_angles.quaternion[0], x = icm_c_angles.quaternion[1];
+    float y = icm_c_angles.quaternion[2], z = icm_c_angles.quaternion[3];
+    /* Gyro là body rates: q_new = q_old * dq, không phải dq * q_old. */
+    float q[4] = {w*dw-x*dx-y*dy-z*dz, w*dx+x*dw+y*dz-z*dy,
+                  w*dy-x*dz+y*dw+z*dx, w*dz+x*dy-y*dx+z*dw};
+    float norm = sqrtf(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]);
+    if (!isfinite(norm) || norm < 1e-6f) {
+        icm_c_angles.ready = 0; icm_c_angles.calibration_state = 4; angles_gap(); return;
+    }
+    for (unsigned i = 0; i < 4; ++i) { q[i] /= norm; icm_c_angles.quaternion[i] = q[i]; }
+    w=q[0]; x=q[1]; y=q[2]; z=q[3];
+    float sin_pitch = 2.0f * (w*y-z*x);
+    if (sin_pitch > 1) sin_pitch = 1;
+    if (sin_pitch < -1) sin_pitch = -1; /* Tránh asin NaN do sai số làm tròn. */
+    icm_c_angles.roll_deg = atan2f(2*(w*x+y*z), 1-2*(x*x+y*y)) * ANGLE_DEG_PER_RAD;
+    icm_c_angles.pitch_deg = asinf(sin_pitch) * ANGLE_DEG_PER_RAD;
+    icm_c_angles.yaw_deg = atan2f(2*(w*z+x*y), 1-2*(y*y+z*z)) * ANGLE_DEG_PER_RAD;
+    ++icm_c_angles.updates;
 }

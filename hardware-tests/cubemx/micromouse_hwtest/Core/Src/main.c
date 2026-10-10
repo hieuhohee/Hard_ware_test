@@ -108,6 +108,8 @@ int main(void)
   test_started = 0; /* Giữ biến trạng thái trong ELF để Watch đọc đúng ở mode chẩn đoán. */
 #if GYRO_IDENTITY_ONLY == 5
   test_started = IcmC_GyroBeginUnverified(); /* Chỉ kết quả readback, chưa xác nhận IMU. */
+  IcmC_AnglesStartCalibration(400); /* Giữ module yên khoảng4s sau khởi động.
+                                     Poll tự hiệu chuẩn rồi cập nhật roll/pitch/yaw. */
 #elif GYRO_IDENTITY_ONLY >= 3
   IcmC_Begin(); /* Bài test C độc lập; không gọi Begin/driver C++ trước bài này. */
 #if GYRO_IDENTITY_ONLY == 4

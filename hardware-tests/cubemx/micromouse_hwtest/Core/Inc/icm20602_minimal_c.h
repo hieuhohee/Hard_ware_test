@@ -65,6 +65,28 @@ uint32_t IcmC_GyroBeginUnverified(void);
    Nếu chưa Data Ready, mỗi100ms vẫn đọc raw nhưng không tăng samples. */
 void IcmC_GyroPollUnverified(void);
 
+/* Góc tương đối từ gyro-only: không đo trọng lực, không có hướng Bắc.
+   q biểu diễn phép quay từ trục module hiện tại về hệ trục tại lúc zero.
+   Euler dùng R=Rz(yaw)*Ry(pitch)*Rx(roll), đơn vị degree; q luôn chuẩn hóa.
+   Thang gyro vẫn giả định16.4LSB/dps khi WHO_AM_I chưa được xác nhận. */
+typedef struct {
+    uint32_t calibration_state; /* 0: tắt; 1: đợi; 2: lấy mẫu; 3: đạt; 4: lỗi. */
+    uint32_t calibration_samples, calibration_target, ready;
+    uint32_t updates, skipped_frames, gap_count, tracking_continuous;
+    float bias_dps[3], noise_std_dps[3], corrected_dps[3];
+    float quaternion[4]; /* [w,x,y,z], q=identity tại lúc đặt mốc. */
+    float roll_deg, pitch_deg, yaw_deg, last_dt_s;
+} IcmC_AngleDiagnostics;
+extern volatile IcmC_AngleDiagnostics icm_c_angles;
+/* Gọi sau GyroBegin, module ĐỨNG YÊN. Đợi500ms rồi thu sample_count fresh
+   (tối thiểu32); main chọn400, khoảng4giây trên bench125Hz. Không UART.
+   Chỉ ready khi readback đạt và cửa sổ bias/nhiễu đạt ngưỡng bench.
+   Gyro-only không phân biệt bias với quay đều rất chậm: vẫn phải giữ yên. */
+uint32_t IcmC_AnglesStartCalibration(uint32_t sample_count);
+/* Đặt tư thế HIỆN TẠI làm roll=pitch=yaw=0, giữ bias đã hiệu chuẩn.
+   Gọi từ chương trình, không cần lệnh UART; trả0 nếu chưa hiệu chuẩn xong. */
+uint32_t IcmC_AnglesResetReference(void);
+
 #ifdef __cplusplus
 }
 #endif
