@@ -212,7 +212,7 @@ static void help() {
         (unsigned long)live.motor_ready_mask,(unsigned long)live.encoder_ready_mask,
         (unsigned long)live.ir_ready_mask,(unsigned long)live.imu_ready,(unsigned long)live.imu_whoami);
 }
-void init() {
+static void init_impl(bool show_menu) {
     // Init chỉ gọi sau SystemClock_Config và tất cả MX_*_Init cần thiết.
     // Không sửa cấu hình trong lúc đang test: dừng rồi reset/init lại.
     stop_everything();
@@ -262,7 +262,42 @@ void init() {
     live.imu_ready=imu_init();
     ir_index=ir_phase=0; command=0;
     last_report=last_imu=last_encoder=HAL_GetTick();
-    help();
+    if (show_menu) help();
+    else log("READY motor=%lu encoder=%lu IR=%lu IMU=%lu WHO=0x%02lX\r\n",
+        (unsigned long)live.motor_ready_mask,(unsigned long)live.encoder_ready_mask,
+        (unsigned long)live.ir_ready_mask,(unsigned long)live.imu_ready,(unsigned long)live.imu_whoami);
+}
+void init() { init_impl(true); } // Giữ tương thích project cũ dùng menu.
+
+// Cùng một đường điều khiển cho API trực tiếp và menu cũ: không sao chép
+// logic PWM/timeout thành hai bản có thể lệch nhau khi sửa về sau.
+static uint8_t start_motor(unsigned index, int direction) {
+    if (index>=2 || (direction!=1 && direction!=-1) || live.motor_active) return 0;
+    stop_everything();
+    if (!(live.motor_ready_mask & (1u<<index))) {
+        log("Motor not configured/ready\r\n"); return 0;
+    }
+    Pwm active=direction>0?motors[index].in1:motors[index].in2;
+    const uint32_t counts=uint32_t((uint64_t(__HAL_TIM_GET_AUTORELOAD(active.timer))+1)*kMotorDutyPercent/100);
+    // Log trước khi bật PWM để UART chậm không kéo dài xung motor.
+    log("Motor %u %c: %u%%, %lu ms.\r\n",index,direction>0?'+':'-',
+        kMotorDutyPercent,(unsigned long)kMotorPulseMs);
+    motor_started=HAL_GetTick(); live.motor_active=index+1;
+    __HAL_TIM_SET_COMPARE(active.timer,active.channel,counts);
+    return 1;
+}
+static uint8_t start_sensors(bool read_ir, bool read_encoder, bool read_gyro, bool calibrate) {
+    stop_everything();
+    monitor_ir=read_ir && live.ir_ready_mask;
+    monitor_encoder=read_encoder && live.encoder_ready_mask;
+    monitor_imu=read_gyro && live.imu_ready;
+    if (calibrate && monitor_imu) {
+        for (float& x : calibration_sum) x=0;
+        calibration_samples=0; calibration_started=HAL_GetTick();
+        live.gyro_calibrated=0; live.gyro_calibrating=1;
+        log("Keep robot STILL: collect 1000 fresh gyro samples; timeout 5 s.\r\n");
+    }
+    return monitor_ir || monitor_encoder || monitor_imu;
 }
 static void dispatch(uint8_t c) {
     // Không nối thêm xung motor khi đang chạy: phải đợi dừng rồi ra lệnh mới.
@@ -276,38 +311,24 @@ static void dispatch(uint8_t c) {
     if (c=='r') { init(); return; }
     if (c>='1' && c<='4') {
         const unsigned index=(c-'1')/2;
-        stop_everything();
-        if (!(live.motor_ready_mask & (1u<<index))) { log("Motor not configured/ready\r\n"); return; }
-        const bool forward=((c-'1')%2)==0;
-        Pwm active=forward?motors[index].in1:motors[index].in2;
-        const uint32_t counts=uint32_t((uint64_t(__HAL_TIM_GET_AUTORELOAD(active.timer))+1)*kMotorDutyPercent/100);
-        log("Motor %u %c: %u%%, %lu ms. s/SPACE stops.\r\n",index,forward?'+':'-',
-            kMotorDutyPercent,(unsigned long)kMotorPulseMs);
-        motor_started=HAL_GetTick(); live.motor_active=index+1;
-        __HAL_TIM_SET_COMPARE(active.timer,active.channel,counts);
+        start_motor(index,((c-'1')%2)==0?+1:-1);
         return;
     }
-    stop_everything();
-    monitor_ir=(c=='i'||c=='a'); monitor_encoder=(c=='e'||c=='a');
-    monitor_imu=(c=='g'||c=='a'||c=='c');
-    if (c=='c' && live.imu_ready) {
-        for (float& x : calibration_sum) x=0;
-        calibration_samples=0; calibration_started=HAL_GetTick();
-        live.gyro_calibrated=0; live.gyro_calibrating=1;
-        log("Keep robot STILL: collect 1000 fresh gyro samples; timeout 5 s.\r\n");
-    }
+    start_sensors(c=='i'||c=='a',c=='e'||c=='a',c=='g'||c=='a'||c=='c',c=='c');
     help();
 }
-void poll() {
+static void poll_impl(bool accept_commands) {
     const uint32_t now=HAL_GetTick();
     // Ưu tiên dừng motor trước mọi I/O chặn. Trong xung motor chỉ đọc UART
     // nonblocking và encoder; không đọc SPI/ADC hoặc in log.
     if (live.motor_active && uint32_t(now-motor_started)>=kMotorPulseMs) {
         stop_motors(); log("Motor pulse finished.\r\n");
     }
-    uint8_t c=command; command=0;
-    if (!c && console) HAL_UART_Receive(console,&c,1,0);
-    if (c) dispatch(c);
+    if (accept_commands) {
+        uint8_t c=command; command=0;
+        if (!c && console) HAL_UART_Receive(console,&c,1,0);
+        if (c) dispatch(c);
+    }
     if (uint32_t(now-last_encoder)>=1) { last_encoder=now; sample_encoders(); }
     if (live.motor_active) return;
     ir_update();
@@ -331,6 +352,18 @@ void poll() {
         (unsigned long)live.imu_ready,(unsigned long)live.imu_samples,
         int(live.gyro_raw[0]),int(live.gyro_raw[1]),int(live.gyro_raw[2]),(unsigned long)live.io_errors);
 }
+void poll() { poll_impl(true); }
 }
+// API chính cho cách test bằng sửa một dòng trong main và build lại.
+extern "C" void HardwareTests_Begin() { bench::init_impl(false); }
+extern "C" void HardwareTests_Update() { bench::poll_impl(false); }
+extern "C" uint8_t HardwareTests_TestIR() { return bench::start_sensors(true,false,false,false); }
+extern "C" uint8_t HardwareTests_TestEncoders() { return bench::start_sensors(false,true,false,false); }
+extern "C" uint8_t HardwareTests_TestGyro() { return bench::start_sensors(false,false,true,false); }
+extern "C" uint8_t HardwareTests_TestAllSensors() { return bench::start_sensors(true,true,true,false); }
+extern "C" uint8_t HardwareTests_CalibrateGyro() { return bench::start_sensors(false,false,true,true); }
+extern "C" uint8_t HardwareTests_TestMotorLeft(int direction) { return bench::start_motor(0,direction); }
+extern "C" uint8_t HardwareTests_TestMotorRight(int direction) { return bench::start_motor(1,direction); }
+extern "C" void HardwareTests_Stop() { bench::stop_everything(); }
 extern "C" void HardwareTests_Init() { bench::init(); }
 extern "C" void HardwareTests_Poll() { bench::poll(); }

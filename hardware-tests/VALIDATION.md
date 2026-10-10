@@ -1,5 +1,13 @@
 # Kết quả kiểm tra
 
+Cập nhật 10/10/2026:
+
+- Thêm API gọi hàm trực tiếp Begin/Update/Test.../Stop; giữ driver và bảng chân hiện tại.
+- Host tests gồm gọi API từ file C link với C++, motor không bị gia hạn, tự dừng và không lặp lại nếu chỉ Update; không nhận UART/command trong chế độ trực tiếp; đọc IR/encoder/gyro, hiệu chuẩn và Stop qua API mới.
+- Build MSVC và CTest sau thay đổi API: PASS, 1/1 test suite.
+- CubeMX 6.18.1 đọc IOC mới, `generate code` với F4 V1.28.3 báo thành công. Đã đối chiếu GPIO, clock, timer, ADC, SPI và UART sinh ra với mẫu module.
+- Thử tạo toàn bộ project CubeIDE bị treo ở dịch vụ tạo metadata; chưa xác nhận import/build ARM, chưa nạp phần cứng. Mã PID không thay đổi.
+
 Cập nhật 09/10/2026 cho test module rời:
 
 - Bổ sung DATA_RDY enable/latch trong driver ICM20602 và kiểm tra đọc lại thanh ghi.

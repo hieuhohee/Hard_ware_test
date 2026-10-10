@@ -81,10 +81,11 @@ Ir ir[5]={
 };
 }
 
-// Gọi một lần SAU HardwareTests_Init() nếu muốn tự mở monitor cảm biến đã chọn.
-// Wrapper dùng được từ main.c. Tuyệt đối không gửi lệnh motor tự động tại đây.
+// Helper tương thích hướng dẫn cũ. Với API trực tiếp mới, chọn bài bằng
+// HardwareTests_TestIR/TestGyro/... trong main; không cần gọi helper này.
+// Wrapper dùng được từ main.c và không tự chạy motor.
 extern "C" void ModuleBench_SelectMonitor(void) {
 #if BENCH_TEST_IR || BENCH_TEST_ENCODER_L || BENCH_TEST_ENCODER_R || BENCH_TEST_GYRO
-    bench::command='a'; // Các khối nullptr vẫn bị bỏ qua; motor giữ dừng.
+    HardwareTests_TestAllSensors(); // Các khối nullptr vẫn bị bỏ qua.
 #endif
 }

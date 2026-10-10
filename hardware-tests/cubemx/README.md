@@ -54,90 +54,47 @@ Encoder không có “tần số phát” do MCU đặt; tốc độ xung phụ 
 
 Không cần sửa PSC/ARR hay đổi GPIO thủ công để dùng bộ test này. Chỉ cấu hình ngoại vi chưa tạo ra firmware test hoàn chỉnh: tiếp tục mục 4.
 
-## 4. Ghép code C++ và chọn module
+## 4. Ghép C++ và chọn bài bằng hàm, không nhập lệnh
 
-Copy đúng các file sau vào project vừa sinh:
+Làm theo **[DIRECT_TEST_GUIDE.md](../DIRECT_TEST_GUIDE.md)**. Copy ba header `hardware_tests_api.h`, `hardware_tests.hpp`, `test_config.hpp` vào `Core/Inc`; `hardware_tests.cpp` vào `Core/Src`; copy mẫu `examples/test_config.modules.cpp` thành duy nhất `Core/Src/test_config.cpp`.
 
-| File nguồn trong `hardware-tests` | File đích trong project CubeIDE |
-|---|---|
-| `hardware_tests.hpp` | `Core/Inc/hardware_tests.hpp` |
-| `test_config.hpp` | `Core/Inc/test_config.hpp` |
-| `hardware_tests.cpp` | `Core/Src/hardware_tests.cpp` |
-| `examples/test_config.modules.cpp` | **`Core/Src/test_config.cpp`** |
+Bật cờ module đang cắm trong `test_config.cpp`, ví dụ `BENCH_TEST_GYRO=1`. `BENCH_USE_UART=1` chỉ để xuất log; nếu 0 thì xem `bench::live` qua ST-Link.
 
-Chỉ có **một** `test_config.cpp`; không compile thêm bản gốc rỗng hoặc bản example thứ hai. Thư mục `Core/Inc` phải nằm trong include path của C++.
-
-Trong bản `Core/Src/test_config.cpp` vừa copy, đặt `BENCH_USE_UART=1` nếu có USB–UART. Đặt 1 cho đúng module đang cắm, giữ các cờ còn lại bằng 0. Ví dụ chỉ test gyro qua UART:
-
-```cpp
-#define BENCH_USE_UART       1
-#define BENCH_TEST_IR        0
-#define BENCH_TEST_ENCODER_L 0
-#define BENCH_TEST_ENCODER_R 0
-#define BENCH_TEST_MOTOR_L   0
-#define BENCH_TEST_MOTOR_R   0
-#define BENCH_TEST_GYRO      1
-```
-
-Mẫu mặc định có tất cả cờ bằng 0. Điều đó không phải lỗi `.ioc`: driver chủ động bỏ qua module chưa chọn. Các handle ADC/TIM/SPI/UART vẫn phải được CubeMX sinh để code compile được; không tắt các peripheral đó trong CubeMX chỉ vì chưa cắm module.
-
-Trong `main.c`, thêm khai báo vào đúng vùng người dùng:
+Trong vùng USER CODE Includes của main:
 
 ```c
-/* USER CODE BEGIN PFP */
-void HardwareTests_Init(void);
-void HardwareTests_Poll(void);
-void ModuleBench_SelectMonitor(void);
-/* USER CODE END PFP */
+#include "hardware_tests_api.h"
 ```
 
-Thêm sau toàn bộ `MX_*_Init()`:
+Sau toàn bộ `MX_*_Init()`, trong USER CODE BEGIN 2:
 
 ```c
-/* USER CODE BEGIN 2 */
-HardwareTests_Init();
-ModuleBench_SelectMonitor();  /* Tự xem cảm biến đã bật, không tự chạy motor. */
-/* USER CODE END 2 */
+HardwareTests_Begin();
+HardwareTests_TestGyro(); // Đổi duy nhất dòng chọn bài khi cần, rồi build/nạp lại.
 ```
 
-Trong vòng lặp do CubeMX sinh:
+Trong USER CODE BEGIN 3 bên trong `while(1)`:
 
 ```c
-while (1)
-{
-  /* USER CODE END WHILE */
-  /* USER CODE BEGIN 3 */
-  HardwareTests_Poll();
-}
-/* USER CODE END 3 */
+HardwareTests_Update();
 ```
 
-Không include header C++ vào `main.c`; dùng ba khai báo C ở trên. Không gọi thêm vòng điều khiển PID, không `HAL_Delay()` trong vòng lặp, không gọi `HardwareTests_Init()` lặp lại.
+Các lựa chọn khác: `HardwareTests_TestIR()`, `HardwareTests_TestEncoders()`, `HardwareTests_CalibrateGyro()`, `HardwareTests_TestMotorLeft(+1)` hoặc `HardwareTests_TestMotorRight(-1)`. Hàm chọn bài trả 1 nếu được nhận, 0 nếu chưa ready/cấu hình sai; có thể lưu vào biến để debug.
 
-## 5. Test từng module và giới hạn IR hiện tại
+Gọi Begin và hàm chọn bài **một lần**. Không gọi lại bài motor hoặc hiệu chuẩn trong while. Motor chạy một xung 12%/300 ms theo cấu hình, rồi Update dừng PWM; nạp/reset sẽ chạy lại bài đã chọn. Không cần `ModuleBench_SelectMonitor()` hoặc các hàm Init/Poll cũ. UART không nhận lệnh trong chế độ Update.
 
-1. Nối GND chung và nguồn logic đúng từng module. UART mức 3.3 V: **PC10→RX adapter, PC11←TX adapter**. ST-Link: PA13/PA14/GND và NRST nếu có. Xem chi tiết đấu nguồn trong [README của bộ test](../README.md).
-2. Build firmware bằng ARM toolchain trong CubeIDE, nạp ST-Link, cho CPU Run. Mở terminal 115200, 8N1, no flow control rồi gửi `h`. Nếu không UART, xem `bench::live` và ghi mã ASCII vào `bench::command` bằng debugger.
-3. Bật cờ encoder tương ứng, gửi `e`, xoay tay: count phải đổi. Nếu chiều tiến count âm, đổi `sign` của encoder đó trong cấu hình sang -1; không đổi timer/pin.
-4. Bật gyro, gửi `g`: WHO_AM_I phải là `0x12`, số mẫu tăng. Gửi `c` khi đặt yên để lấy bias; driver chỉ dùng gyro.
-5. Bật IR, gửi `i`: mẫu hiện tại chỉ dùng **một bộ phát PC1 + thu PA3** ở phần tử logic `ir[0]`. Theo dõi `ir_off`, `ir_on`, `ir_difference` khi đổi khoảng cách.
-6. Với motor, nâng bánh khỏi bàn, đấu nguồn VM đúng phần cứng. Bật cờ bên muốn thử, gửi `1`/`2` cho trái, `3`/`4` cho phải: xung mặc định 12% trong 300 ms. `s` hoặc SPACE để dừng. Chỉ riêng bật cờ không tự quay motor.
+## 5. Dây thật và IR
 
-**Năm mắt IR nhưng ba nhóm phát:** `.ioc` đã dành đủ cả 5 chân thu và 3 chân phát. Tuy nhiên driver bench hiện tại từ chối hai phần tử `ir[]` trùng chân phát; chưa có lịch đo 5 mắt theo 3 nhóm. Vì vậy bản cấu hình này dành cho test **từng mắt**: giữ chỉ `ir[0]` hoạt động và bốn phần tử còn lại unused, sửa cặp emitter/channel trong `test_config.cpp` theo dây thực tế rồi build lại.
+UART log: PC10→RX adapter 3.3 V, GND chung, terminal 115200/8N1. ST-Link: PA13/PA14/GND và NRST nếu có. Test encoder bằng tay trước, gyro/IR trước, nâng bánh khi thử motor; xem nguồn và vận hành trong [hướng dẫn gọi hàm](../DIRECT_TEST_GUIDE.md).
 
-Ví dụ nếu muốn thử mắt thu PC0 đang được chiếu bởi LED nhóm trước PC2:
+File đã dành đủ 5 chân thu và 3 nhóm phát IR, nhưng driver bench hiện tại chỉ chấp nhận các emitter độc lập. Mẫu module chọn một bộ phát PC1 + thu PA3; muốn thử mắt khác thì sửa cặp emitter/channel ở `ir[0]`, giữ bốn phần tử còn lại unused và build lại. Không điền trùng emitter để đo đồng thời 5 mắt theo 3 nhóm; lịch IR theo nhóm chưa được triển khai.
 
-```cpp
-// Thay phần tử ir[0] trong nhánh #if BENCH_TEST_IR của mẫu:
-{{GPIOC, GPIO_PIN_2}, ADC_CHANNEL_10, +1},
-```
-
-PC1/PA5/PC2 lần lượt dành cho hông/chéo/trước; chọn đúng nhóm chiếu cho mắt đang đo. Không suy ra nhóm phát của IR1…IR5 chỉ từ số thứ tự. Không điền cả 5 mắt với các chân phát trùng nhau rồi mong driver hiện tại đo được toàn bộ. Dùng đủ 5 mắt theo 3 nhóm cần thay lịch IR riêng, nằm ngoài thay đổi `.ioc` này.
-
-PC8/PC9 là input no-pull theo sơ đồ có điện trở kéo lên ngoài. Nếu test nút rời không có điện trở ngoài thì đổi input pull-up trong CubeMX; code bench hiện tại không dùng nút để chạy motor. PB8 INT cũng không cần nối cho bài test gyro polling.
+PC8/PC9 là input no-pull theo mạch có pull-up ngoài; nút rời không có pull-up thì đổi input pull-up. Bộ test chưa dùng nút. PB8 INT không cần nối vì gyro polling qua SPI.
 
 ## 6. Phạm vi kiểm tra
 
 Đã dùng STM32CubeMX 6.18.1 đọc file và sinh các file khởi tạo C với thư viện F4 V1.28.3; đối chiếu code sinh ra với bảng chân, clock, ADC polling, PWM, encoder, SPI và UART của mẫu module. Code sinh thử được để riêng trong thư mục tạm của workspace, không trộn vào nguồn bench.
 
 Đây là kiểm tra cấu hình và code khởi tạo, chưa phải kiểm chứng bằng ARM build hay đo trên phần cứng. Khi nạp thực tế vẫn cần kiểm tra nguồn, chân connector, mức tín hiệu, chiều motor/encoder và kết quả từng module.
+
+Chế độ CLI `generate code` báo thành công và kết thúc bình thường. Lần thử tạo toàn bộ project CubeIDE bị treo ở dịch vụ sinh metadata IDE; do đó chưa xác nhận import/build project CubeIDE, chỉ xác nhận đọc IOC và sinh các file khởi tạo. Khi mở CubeMX để Generate Code thực tế, kiểm tra kết quả bước tạo project trên máy của bạn.

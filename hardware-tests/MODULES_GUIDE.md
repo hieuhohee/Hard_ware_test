@@ -4,9 +4,9 @@ Bạn có thể test một mắt IR, một encoder, một motor/AT8870 hoặc m�
 
 ## 1. Tách project để tránh ảnh hưởng firmware chính
 
-Tạo một project CubeIDE/CubeMX riêng, ví dụ `Mouse_Module_Bench`, chọn STM32F405RGT6. Giữ `micromouse-control/` nguyên vẹn. Chỉ copy bốn file sau từ `hardware-tests/` vào project bench:
+Tạo một project CubeIDE/CubeMX riêng, ví dụ `Mouse_Module_Bench`, chọn STM32F405RGT6. Giữ `micromouse-control/` nguyên vẹn. Copy năm file sau từ `hardware-tests/` vào project bench:
 
-- `hardware_tests.cpp`, `hardware_tests.hpp`.
+- `hardware_tests.cpp`, `hardware_tests.hpp`, `hardware_tests_api.h`.
 - `test_config.cpp`, `test_config.hpp`.
 
 Sau đó copy nội dung `examples/test_config.modules.cpp` **thay vào** `test_config.cpp` trong project bench. Không thêm cả hai file cấu hình vào build cùng lúc. Thư mục examples không phải source cần tự động compile.
@@ -31,35 +31,18 @@ Mẫu đã có các cờ, mặc định toàn bộ bằng 0:
 
 Muốn test một IR: đặt `BENCH_TEST_IR=1`, còn lại giữ 0. Muốn test gyro: IR=0, GYRO=1. Muốn xem encoder lúc motor quay: bật đúng MOTOR_L và ENCODER_L. Có thể bật nhiều cờ, nhưng chỉ bật khối đã đấu dây. Cờ USE_UART độc lập, bật khi đã có USB–UART mức logic 3.3V.
 
-Mẫu tự gán handle của khối không dùng thành `nullptr`. Với con trỏ rỗng, bộ test bỏ qua khối đó, không giao tiếp với IC chưa cắm. Motor được chọn chỉ khởi tạo PWM bằng 0; vẫn phải nhận lệnh riêng mới quay. Không tự thử motor ở boot.
+Mẫu tự gán handle của khối không dùng thành `nullptr`. Với con trỏ rỗng, bộ test bỏ qua khối đó, không giao tiếp với IC chưa cắm. Motor được chọn chỉ khởi tạo PWM bằng 0; chỉ quay khi bạn gọi hàm TestMotor tương ứng. Nếu đặt hàm đó sau Begin, bài motor chạy lại mỗi lần boot/reset.
 
-## 3. Giữ while đơn giản, không comment từng driver
+## 3. Gọi hàm chọn bài một lần, Update trong while
 
-Trong `main.c` do CubeMX sinh:
+Xem [DIRECT_TEST_GUIDE.md](DIRECT_TEST_GUIDE.md) để copy đúng các vùng USER CODE vào main.c/main.cpp. Include `hardware_tests_api.h`; sau tất cả MX_*_Init gọi:
 
 ```c
-/* USER CODE BEGIN PFP */
-void HardwareTests_Init(void);
-void HardwareTests_Poll(void);
-void ModuleBench_SelectMonitor(void); /* Có trong mẫu cấu hình mới. */
-/* USER CODE END PFP */
-
-/* USER CODE BEGIN 2 -- sau các MX_*_Init */
-HardwareTests_Init();
-ModuleBench_SelectMonitor(); /* Chọn monitor cảm biến một lần; không quay motor. */
-/* USER CODE END 2 */
-
-while (1) {
-    /* USER CODE BEGIN 3 */
-    HardwareTests_Poll();
-    /* Không HAL_Delay(), không gọi HardwareTests_Init() lặp lại. */
-    /* USER CODE END 3 */
-}
+HardwareTests_Begin();
+HardwareTests_TestIR(); // Hoặc TestEncoders(), TestGyro(), CalibrateGyro()...
 ```
 
-Nếu dùng main.cpp, có thể include `hardware_tests.hpp`, gọi `bench::init()`, đặt `bench::command='i'` MỘT LẦN ngoài while rồi gọi `bench::poll()` trong while. `'i'` cho IR, `'e'` cho encoder, `'g'` cho gyro. Hàm `ModuleBench_SelectMonitor()` trong mẫu tự gửi `'a'` một lần; chỉ cảm biến được chọn mới được đọc.
-
-Không viết `bench::command='i';` bên trong while: mỗi lượt sẽ xử lý lại lệnh và reset tiến trình đo. Đặc biệt không đặt `command='1'` liên tục: motor sẽ bị yêu cầu chạy lại sau mỗi lần dừng. Vòng poll phải tiếp tục chạy để quản lý timeout và lệnh dừng.
+Trong while chỉ gọi `HardwareTests_Update()` liên tục, không HAL_Delay. Không cần nhận lệnh hay ghi biến command. Muốn đổi bài, thay dòng chọn hàm rồi build/nạp lại. Không đặt hàm chọn bài trong while, đặc biệt bài motor sẽ bị chạy lặp lại sau mỗi lần dừng.
 
 ## 4. CubeMX: phần MCU khác với module ngoài
 
@@ -67,7 +50,7 @@ Không viết `bench::command='i';` bên trong while: mỗi lượt sẽ xử l�
 
 Cách ít thay đổi nhất là giữ cấu hình ngoại vi MCU đầy đủ theo bảng dưới và gọi các `MX_*_Init()` đã sinh; chỉ giới hạn module ngoài bằng các cờ. Khởi tạo peripheral của MCU không bắt buộc IC ngoài phải có mặt. Không bật interrupt/DMA hay tự start PWM ngoài bộ test.
 
-Clock baseline: HSI16, PLLM16/PLLN336/PLLP2/PLLQ7; SYSCLK168MHz, APB1=42MHz, timer APB1=84MHz, APB2=84MHz. SysTick timebase, Debug Serial Wire. Chưa biết thạch anh module thì không tự chọn HSE theo phỏng đoán.
+Clock baseline: HSI16, PLLM8/PLLN168/PLLP2/PLLQ7; SYSCLK168MHz, APB1=42MHz, timer APB1=84MHz, APB2=84MHz. SysTick timebase, Debug Serial Wire. Chưa biết thạch anh module thì không tự chọn HSE theo phỏng đoán.
 
 | MCU peripheral | Cấu hình bench |
 |---|---|
@@ -89,13 +72,13 @@ Chân dưới đây là tên GPIO, không phải số chân connector của modu
 
 ### Một encoder MT6701
 
-Chọn `BENCH_TEST_ENCODER_L=1`. A → PC6, B → PC7; nguồn/GND theo module. Z chưa cần dùng. Đặt nam châm đúng cơ khí, quay từ từ, xem `bench::live.encoder_total[0]` tăng/giảm. Chỉ có encoder thì motor không cần nối.
+Chọn `BENCH_TEST_ENCODER_L=1`, gọi `HardwareTests_TestEncoders()` sau Begin. A → PC6, B → PC7; nguồn/GND theo module. Z chưa cần dùng. Đặt nam châm đúng cơ khí, quay từ từ, xem `bench::live.encoder_total[0]` tăng/giảm. Chỉ có encoder thì motor không cần nối.
 
 `encoder_ready_mask=1` nghĩa chỉ encoder trái đã được bật; không phải lỗi vì thiếu encoder phải. Nếu module chỉ lộ SDA/SCL hay SSI, đây chưa phải ngõ A/B: cần xác nhận/chuyển chế độ đúng MT6701 hoặc viết driver giao tiếp đó. Không nối SDA/SCL vào PC6/PC7 rồi mong timer encoder hoạt động.
 
 ### Một IR
 
-Chọn `BENCH_TEST_IR=1`. Mạch phát: PC1 điều khiển MOSFET/transistor phù hợp và điện trở hạn dòng LED. Mạch thu analog đưa tín hiệu 0–3.3V vào PA3. Không cấp dòng LED công suất trực tiếp từ GPIO.
+Chọn `BENCH_TEST_IR=1`, gọi `HardwareTests_TestIR()` sau Begin. Mạch phát: PC1 điều khiển MOSFET/transistor phù hợp và điện trở hạn dòng LED. Mạch thu analog đưa tín hiệu 0–3.3V vào PA3. Không cấp dòng LED công suất trực tiếp từ GPIO.
 
 Quan sát `ir_off[0]`, `ir_on[0]`, `ir_difference[0]`. Đưa vật/tường gần xa và xoay hướng. Với mạch thu cho điện áp tăng khi nhận nhiều ánh sáng, `signal_sign=+1`; nếu đảo, đổi dấu sau khi đo thực tế.
 
@@ -105,9 +88,9 @@ Bộ bench cũ yêu cầu các kênh phát độc lập, mẫu này chỉ bật 
 
 ### ICM20602, chỉ gyro
 
-Chọn `BENCH_TEST_GYRO=1`. CS→PB12, SCK→PB13, SDO/MISO→PB14, SDI/MOSI→PB15; nguồn và GND theo breakout. Chân INT không cần nối cho bài polling. Dây SPI nên ngắn, khởi đầu clock thấp như bảng.
+Chọn `BENCH_TEST_GYRO=1`, gọi `HardwareTests_TestGyro()` sau Begin. CS→PB12, SCK→PB13, SDO/MISO→PB14, SDI/MOSI→PB15; nguồn và GND theo breakout. Chân INT không cần nối cho bài polling. Dây SPI nên ngắn, khởi đầu clock thấp như bảng.
 
-Xem `imu_ready=1`, `imu_whoami=0x12`, `imu_samples` tăng. `gyro_raw[0..2]` là số thô, `gyro_dps[0..2]` là độ/giây. Để yên, gửi `c` để trừ bias từ 1000 mẫu; bộ bench không tự biết bạn đang xoay nên phải giữ yên. WHO đúng nhưng samples không tăng thì kiểm tra data-ready và lỗi bus.
+Xem `imu_ready=1`, `imu_whoami=0x12`, `imu_samples` tăng. `gyro_raw[0..2]` là số thô, `gyro_dps[0..2]` là độ/giây. Muốn trừ bias, chọn `HardwareTests_CalibrateGyro()` thay cho TestGyro rồi giữ yên để lấy 1000 mẫu; bộ bench không tự biết bạn đang xoay nên phải giữ yên. WHO đúng nhưng samples không tăng thì kiểm tra data-ready và lỗi bus.
 
 Trong lượt cập nhật này bộ bench đã được bổ sung bật DATA_RDY và latch INT bên trong ICM20602, đồng thời đọc lại thanh ghi. MCU vẫn đọc trạng thái qua SPI, không bật EXTI. Đây là cập nhật riêng của bộ bench, không sửa source PID.
 
@@ -117,31 +100,15 @@ Nếu module thật là **MPU6050/MPU6500/MPU9250**, không dùng nguyên driver
 
 Chọn `BENCH_TEST_MOTOR_L=1`. IN1→PB4, IN2→PB5, motor vào OUT1/OUT2; VM dùng nguồn motor đúng định mức, GND chung MCU. Không cấp motor từ chân 3.3V của F405/USB–UART. Nối dòng motor bằng dây/đầu nối phù hợp, không cho dòng motor đi qua đường breadboard tín hiệu yếu.
 
-Nâng bánh/giữ cơ cấu chắc. Gửi `1` chạy chiều + hoặc `2` chiều -, mặc định 12% trong 300ms; gửi `s` dừng. Không cần encoder, gyro hoặc IR để test xung motor thô. Với motor phải chọn MOTOR_R và dùng `3`/`4`.
-
-Không dùng lệnh `b` hoặc `e` để arm như dự án PID: đây là menu bench khác. Trong bộ bench, `e` là xem encoder, còn `1` là lệnh motor trực tiếp. Xem đúng menu `h` của firmware đang nạp.
+Nâng bánh/giữ cơ cấu chắc. Gọi `HardwareTests_TestMotorLeft(+1)` hoặc `(-1)` một lần sau Begin: mặc định 12%/300 ms, Update tự dừng. Motor phải dùng `HardwareTests_TestMotorRight(+1)` hoặc `(-1)`. Không cần encoder, gyro hoặc IR để test xung motor thô. Hàm `HardwareTests_Stop()` cho phép chương trình dừng bài. UART không nhận lệnh trong cách dùng mới.
 
 Muốn kiểm tra motor + encoder: bật cả MOTOR_L và ENCODER_L. Trong xung motor, encoder vẫn được cập nhật vào Watch, log được hoãn đến sau xung. Bộ bench tạm ngưng IR/gyro trong xung; kiểm tra đồng thời nhiều sensor khi chạy liên tục thuộc dự án điều khiển mới.
 
 ## 6. Không có USB–UART thì dùng ST-Link
 
-Giữ `BENCH_USE_UART=0`; trong CubeIDE Debug/Live Expressions thêm `bench::live` và `bench::command`. Sensor monitor có thể tự chạy nhờ `ModuleBench_SelectMonitor()` nên không cần gửi lệnh để đọc IR/encoder/gyro.
+Giữ `BENCH_USE_UART=0`; chọn hàm test trong main như trên. Trong CubeIDE Debug/Live Expressions thêm `bench::live`; không cần sửa `bench::command`. Với bài motor, không đặt breakpoint giữa xung: PWM có thể vẫn chạy khi CPU dừng và Update không thể thực hiện timeout. Kết quả Watch là snapshot, không đảm bảo các trường được đọc đồng thời.
 
-Muốn ra lệnh, ghi mã ASCII vào `bench::command` rồi cho chương trình chạy:
-
-| Mã | Ký tự | Tác dụng |
-|---:|---|---|
-| 105 | i | Xem IR |
-| 101 | e | Xem encoder |
-| 103 | g | Xem gyro |
-| 99 | c | Zero gyro khi đứng yên |
-| 49 / 50 | 1 / 2 | Xung motor trái +/- |
-| 51 / 52 | 3 / 4 | Xung motor phải +/- |
-| 115 | s | Dừng |
-
-Nếu IDE chỉ cho sửa biến khi CPU halt, hãy halt khi mọi output đã dừng, đặt command rồi Resume. Không single-step/breakpoint giữa xung motor hoặc IR: timeout dựa vào main không chạy được khi CPU dừng. Cấu hình freeze timer/debug phù hợp và để sẵn cách cắt nguồn motor. Watch read khi CPU chạy có thể là snapshot không hoàn toàn đồng thời giữa các trường.
-
-Nếu dùng USB–UART: RX adapter→PC10, TX adapter→PC11, GND chung,1152008N1, logic3.3V. Khi bo cấp nguồn riêng, không cần nối VCC adapter. Mẫu bench không dùng USB CDC.
+Nếu dùng USB–UART để xem log: RX adapter→PC10, GND chung, 115200/8N1, mức logic 3.3 V. Không cần nối TX adapter khi chỉ đọc log; .ioc vẫn giữ PC11 RX. Khi bo đã cấp nguồn riêng, không nối VCC adapter. Không cần gõ lệnh. Mẫu không dùng USB CDC.
 
 ## 7. Chuyển về dự án chính
 

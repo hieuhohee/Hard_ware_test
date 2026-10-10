@@ -1,5 +1,7 @@
 # Bộ test phần cứng Micromouse — C++ / STM32F405 HAL
 
+**Cách dùng hiện tại: gọi hàm, build lại, không gửi lệnh.** Xem [DIRECT_TEST_GUIDE.md](DIRECT_TEST_GUIDE.md): gọi `HardwareTests_Begin()` và một hàm chọn bài sau khởi tạo, rồi chỉ gọi `HardwareTests_Update()` trong `while(1)`. UART nếu bật chỉ xuất kết quả. Các mục dùng `HardwareTests_Init/Poll`, ký tự lệnh và `bench::command` phía dưới là giao diện cũ được giữ để tương thích; không cần dùng cho cách test mới.
+
 Dành cho **2 AT8870 + 2 motor N20 + 2 MT6701 ở chế độ A/B + gyro ICM20602 qua SPI + 5 IR analog**.
 ICM20602 chỉ dùng gyro XYZ; ba trục accelerometer được đưa vào standby, không đọc hoặc xuất dữ liệu accel.
 Đây là module chẩn đoán để thêm vào một project STM32CubeIDE/CubeMX, chưa phải file HEX độc lập.
@@ -48,7 +50,7 @@ IR phát phải có tầng MOSFET/transistor và điện trở hạn dòng; khô
 
 ### Từ project đến phiên test thật
 
-1. Tạo project CubeIDE bench F405 riêng theo [MODULES_GUIDE.md](MODULES_GUIDE.md). Copy bốn file C++, thay nội dung file cấu hình bằng mẫu và chọn cờ. Giữ các thư viện HAL cần thiết dù module ngoài bị tắt bằng `nullptr`.
+1. Tạo project CubeIDE bench F405 riêng theo [MODULES_GUIDE.md](MODULES_GUIDE.md). Copy năm file (hai .cpp, hai .hpp và hardware_tests_api.h), thay nội dung file cấu hình bằng mẫu và chọn cờ. Giữ các thư viện HAL cần thiết dù module ngoài bị tắt bằng `nullptr`.
 2. Cấu hình CubeMX, gọi `HardwareTests_Init()` một lần sau các `MX_*_Init()`; gọi `ModuleBench_SelectMonitor()` một lần nếu dùng mẫu mới. Trong `while(1)` chỉ gọi `HardwareTests_Poll()` liên tục, không delay. Chi tiết wrapper C/C++ ở mục 3 bên dưới.
 3. Build bằng ARM toolchain của CubeIDE, nạp qua ST-Link rồi cho CPU Run. Executable CMake host trên PC không phải firmware nạp được.
 4. Nếu dùng UART, đặt `BENCH_USE_UART=1`, mở COM1152008N1,no flow, gửi `h`. Ready mask bằng 1 cho riêng khối trái/IR đầu tiên là bình thường; không cần đủ motor/encoder mask3 hoặc IR mask31 khi chỉ cắm một module.
@@ -89,7 +91,8 @@ Các mask ready cho biết driver được khởi tạo/chấp nhận cấu hìn
 |---|---|
 | `test_config.hpp` | Kiểu cấu hình và thông số test |
 | `test_config.cpp` | **Điền toàn bộ chân/handle/kênh tại đây** |
-| `hardware_tests.hpp` | API, biến `bench::live` và `bench::command` |
+| `hardware_tests_api.h` | API gọi trực tiếp từ C/C++, không nhập lệnh |
+| `hardware_tests.hpp` | API cũ, biến `bench::live` và `bench::command` |
 | `hardware_tests.cpp` | Motor, IR, encoder, driver ICM20602 và menu |
 
 Ví dụ cú pháp (chỉ minh họa, KHÔNG phải sơ đồ đấu dây đã chọn):
@@ -165,7 +168,7 @@ Không sửa cấu hình lúc đang chạy; dừng, build và reset lại sau kh
 
 ## 3. Ghép vào main của CubeMX
 
-Copy bốn file `.hpp/.cpp` vào project, thêm thư mục vào include path C++.
+Copy hai file `.hpp`, hai file `.cpp` và `hardware_tests_api.h` vào project, thêm thư mục vào include path C++.
 Bật C++11 hoặc mới hơn, bảo đảm bước link dùng trình liên kết C++ của toolchain.
 Giữ nguyên phần khởi tạo HAL/clock và gọi các `MX_*_Init()` trước khi gọi test.
 

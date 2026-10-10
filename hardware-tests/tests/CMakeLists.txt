@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(micromouse_bench_host LANGUAGES CXX)
-add_executable(bench_host host_tests.cpp ../hardware_tests.cpp ../test_config.cpp)
+project(micromouse_bench_host LANGUAGES C CXX)
+add_executable(bench_host host_tests.cpp c_api_smoke.c ../hardware_tests.cpp ../test_config.cpp)
 target_include_directories(bench_host PRIVATE . ..)
 target_compile_features(bench_host PRIVATE cxx_std_11)
 if(MSVC)

@@ -2,6 +2,7 @@
 #include "test_config.hpp"
 #include <cstdlib>
 #include <cstdio>
+extern "C" uint8_t bench_test_c_api_start_gyro(void);
 
 // Các test cố tình đưa lỗi bus, tràn counter và thiếu cấu hình vào module.
 // Đây là mô phỏng logic, không mô phỏng analog hoặc thời gian ADC thực tế.
@@ -11,6 +12,7 @@ CoreDebugType fake_debug;
 uint32_t SystemCoreClock=168000000;
 static uint32_t tick, adc_channel;
 static bool adc_failure, spi_failure;
+static unsigned uart_receive_calls;
 static uint8_t registers[128]{};
 static GPIO_TypeDef led_ports[5], cs_port;
 uint32_t HAL_GetTick() { return tick; }
@@ -28,7 +30,7 @@ HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef*) { return HAL_OK; }
 HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef*,uint32_t) { return adc_failure?HAL_TIMEOUT:HAL_OK; }
 uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef*) { return led_ports[adc_channel].state?300:100; }
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) { return HAL_OK; }
-HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) { return HAL_TIMEOUT; }
+HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) { ++uart_receive_calls; return HAL_TIMEOUT; }
 HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef*,uint8_t* tx,uint8_t* rx,uint16_t n,uint32_t) {
     // Chặn hồi quy sang đọc accel/temp; gói gyro phải đủ ba trục, 6 byte.
     const uint8_t reg=tx[0]&0x7F;
@@ -96,7 +98,46 @@ int main() {
     CHECK(!live.gyro_calibrating && !live.gyro_calibrated);
     spi_failure=true; send('g'); step(); CHECK(!live.imu_ready && cs_port.state==1);
     spi_failure=false; registers[0x75]=0x68; init(); CHECK(!live.imu_ready && live.imu_whoami==0x68);
+
+    // API gọi trực tiếp: có UART để log nhưng Update tuyệt đối không nhận lệnh.
+    registers[0x75]=0x12; registers[0x3A]=1;
+    UART_HandleTypeDef uart; console=&uart;
+    CHECK(bench_test_c_api_start_gyro()); // Hàm trong file .c gọi API C++ thực.
+    CHECK(!live.motor_active);
+    CHECK(!HardwareTests_TestMotorLeft(0));
+    CHECK(HardwareTests_TestMotorLeft(+1));
+    CHECK(pwm_hw.CCR[0]==504 && pwm_hw.CCR[1]==0);
+    CHECK(!HardwareTests_TestMotorRight(+1)); // Không đổi/gia hạn xung đang chạy.
+    const unsigned old_rx_calls=uart_receive_calls;
+    command='s'; HAL_Delay(100); HardwareTests_Update();
+    CHECK(live.motor_active==1); // Biến command cũng không có tác dụng ở chế độ này.
+    HAL_Delay(200); HardwareTests_Update();
+    CHECK(!live.motor_active && pwm_hw.CCR[0]==0);
+    command='3'; HAL_Delay(500); HardwareTests_Update();
+    CHECK(!live.motor_active && uart_receive_calls==old_rx_calls);
+    CHECK(HardwareTests_TestMotorRight(-1)); CHECK(pwm_hw.CCR[3]==504);
+    HardwareTests_Stop(); CHECK(!live.motor_active && pwm_hw.CCR[3]==0);
+    CHECK(HardwareTests_TestIR());
+    for(unsigned i=0;i<50;++i) { HAL_Delay(1); HardwareTests_Update(); }
+    CHECK(live.ir_frames>0 && live.ir_difference[0]==200);
+    CHECK(HardwareTests_TestEncoders());
+    const int64_t before=live.encoder_total[0];
+    enc_l.CNT+=7; HAL_Delay(1); HardwareTests_Update();
+    CHECK(live.encoder_total[0]==before+7);
+    CHECK(HardwareTests_TestGyro()); HAL_Delay(1); HardwareTests_Update();
+    CHECK(live.gyro_raw[2]==-32768);
+    CHECK(HardwareTests_CalibrateGyro());
+    for(unsigned i=0;i<1010;++i) { HAL_Delay(1); HardwareTests_Update(); }
+    CHECK(live.gyro_calibrated && !live.gyro_calibrating);
+    CHECK(HardwareTests_TestAllSensors());
+    HardwareTests_Stop();
+    for(auto& p:led_ports) CHECK(p.state==0);
+    const uint32_t samples=live.imu_samples, frames=live.ir_frames;
+    HAL_Delay(10); HardwareTests_Update();
+    CHECK(live.imu_samples==samples && live.ir_frames==frames);
+    live.imu_ready=0; CHECK(!HardwareTests_TestGyro());
+    console=nullptr;
     ir[1].emitter=ir[0].emitter; init(); CHECK((live.ir_ready_mask&3)==0);
     motors[1].in1=motors[0].in1; init(); CHECK(live.motor_ready_mask==0);
-    std::puts("PASS: empty config, motor pulse/stop/tick wrap, encoder wrap/sign, IR subtraction/error, IMU decode/calibration/timeout/wrong ID, resource conflicts");
+    std::puts("PASS: empty config, motor pulse/stop/tick wrap, encoder wrap/sign, IR subtraction/error, IMU decode/calibration/timeout/wrong ID, direct API without command reception, resource conflicts");
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "hardware_tests_api.h" // API gọi trực tiếp, dùng cả từ C/C++.
 
 namespace bench {
 // Có thể xem cấu trúc này trong Live Expressions/Watch mà không cần UART.
