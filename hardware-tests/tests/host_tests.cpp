@@ -2,7 +2,15 @@
 #include "test_config.hpp"
 #include <cstdlib>
 #include <cstdio>
+#include <type_traits>
 extern "C" uint8_t bench_test_c_api_start_gyro(void);
+// Chặn hồi quy lỗi debugger diễn giải byte chẩn đoán thành ký tự/chuỗi.
+static_assert(std::is_same<decltype(bench::IdentityReadOnly::id),uint32_t[32]>::value,
+              "Watch IDs must be numeric, not unsigned char strings");
+static_assert(std::is_same<decltype(bench::SpiRoundTrip::rx),uint32_t[3][7]>::value,
+              "Watch packets must preserve high bytes as numbers");
+static_assert(std::is_same<decltype(bench::I2cIdentity::id),uint32_t[8]>::value,
+              "I2C IDs must be numeric in Watch");
 
 // Các test cố tình đưa lỗi bus, tràn counter và thiếu cấu hình vào module.
 // Đây là mô phỏng logic, không mô phỏng analog hoặc thời gian ADC thực tế.
@@ -187,6 +195,12 @@ int main() {
     CHECK(bus_probe.rx[2][1]==0x12 && !live.imu_ready && !live.motor_active);
     registers[0x75]=0x2E; HardwareTests_ProbeGyroBus();
     CHECK(bus_probe.result==5 && bus_probe.matches==4 && !live.imu_ready);
+    // Các byte từng làm extension lỗi UTF-8 phải giữ nguyên giá trị số.
+    registers[0x75]=253; HardwareTests_ProbeGyroBus();
+    CHECK(bus_probe.whoami==253 && bus_probe.rx[0][1]==253 && bus_probe.result==5);
+    registers[0x75]=255; HardwareTests_ReadOnlyGyroProbe();
+    CHECK(readonly_probe.id[0]==255 && readonly_probe.id[31]==255 && readonly_probe.matches==0);
+    registers[0x75]=0x2E;
     bad_divider_readback=true; HardwareTests_ProbeGyroBus(); bad_divider_readback=false;
     CHECK(bus_probe.result==3 && bus_probe.matches==3 && bus_probe.restore_ok && registers[0x19]==7);
     spi_failure=true; HardwareTests_ProbeGyroBus(); spi_failure=false;

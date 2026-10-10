@@ -1,5 +1,10 @@
 # Báo cáo tự kiểm thử ICM trên F405 — 10/10/2026
 
+**Cập nhật lỗi Watch:** xem [DEBUG_WATCH_FIX.md](DEBUG_WATCH_FIX.md).
+Đã đổi các bản sao byte chẩn đoán sang uint32_t và kiểm chứng GDB/MI
+hiển thị số trên bo. Các địa chỉ/layout RAM trong snapshot bên dưới thuộc
+phiên trước sửa Watch, không dùng cho ELF mới.
+
 **Build, nạp/verify và giao tiếp ghi/đọc đã đạt trong các phép thử bên dưới.
 Nhận dạng ICM20602 chưa đạt: cùng module trả WHO_AM_I=0x2E qua cả SPI và I2C,
 trong khi datasheet quy định0x12. Chưa có mẫu gyro được driver công bố hợp lệ.**
