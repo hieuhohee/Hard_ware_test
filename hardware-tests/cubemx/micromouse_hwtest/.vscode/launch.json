@@ -1,7 +1,4 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
@@ -12,9 +9,12 @@
             "cwd": "${workspaceFolder}",
             "preBuild": "${command:st-stm32-ide-debug-launch.build}",
             "runEntry": "main",
+            "serverReset": "Software system reset",
+            "serverInterface": "SWD",
+            "serverInterfaceFrequency": "1000",
             "imagesAndSymbols": [
                 {
-                    "imageFileName": "${command:st-stm32-ide-debug-launch.get-projects-binary-from-context1}"
+                    "imageFileName": "${workspaceFolder}/build/Debug/micromouse_hwtest.elf"
                 }
             ]
         }
