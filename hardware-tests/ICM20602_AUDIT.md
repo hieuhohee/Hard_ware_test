@@ -90,8 +90,79 @@ Nếu chỉ có debugger, gửi lịch sử tám ID cùng ảnh nhãn chân/mã 
 
 ## Kiểm chứng đã thực hiện
 
+### Kiểm thử trực tiếp trên bo ngày 10/10/2026
+
+Đã kết nối ST-Link SN `37FF71064E573436C2DE1443`, đọc F405 ID `0x413`,
+điện áp tham chiếu 3.29 V. Sao lưu **toàn bộ Flash 1 MiB** vào
+`tmp/imu-probe/before-probe.bin` trước lần nạp chẩn đoán đầu tiên. File này
+không đưa vào Git. Mốc mã nguồn trước sửa là `3e2b039`; bản dò mode đã lưu
+ở `37ac7af` trước khi bổ sung chẩn đoán GPIO.
+
+Thanh ghi đọc trực tiếp của bản cũ: SPI2 CR1 `0x36C` (master, 8-bit,
+MSB, mode0, divider64); GPIOB MODER `0xA900AA8F`, AFRH `0x55500000`
+(PB13/14/15 AF5). Tám ID đều `0x2E`, HAL_OK, không có mẫu gyro.
+
+Đã nạp và verify firmware chẩn đoán qua STM32CubeProgrammer. Lần dò đầu:
+
+| Phép thử thực tế | Kết quả |
+|---|---|
+| Mode0, divider64, khoảng 656.25 kHz | 8/8 ID 0x2E |
+| Mode0, divider256, khoảng 164.06 kHz | 8/8 ID 0x2E |
+| Mode3, divider64 | 8/8 ID 0x2E |
+| Mode3, divider256 | 8/8 ID 0x2E |
+| SPI tự tạo xung GPIO, mode0, khoảng 250 kHz | 8/8 ID 0x2E ở lần thử đầu |
+
+GPIO SPI giữ đúng CS PB12/SCK PB13/MISO PB14/MOSI PB15, tạm thay MODER
+rồi khôi phục cả MODER và SPI CR1. Không đổi .ioc hay chân PCB. Đọc một
+số địa chỉ trả giá trị khác nhau: 0x0F→0x78, 0x19→0x00, 0x1A→0x00,
+0x1B→0x80, 0x6B→0x41, 0x70→0x40, 0x75→0x2E. Giá trị này là dữ liệu
+đo, không phải bằng chứng xác nhận loại chip; không dùng chúng làm cấu hình.
+
+Ở lần nạp tiếp theo để thử wake/reset, một số mẫu trước reset chuyển sang
+0x00/0xFF, GPIO SPI có tám ID 0x00; sau DEVICE_RESET + tắt I2C lại,
+tám ID vẫn 0x2E. Vì vậy chưa thể tuyên bố bus luôn ổn định. Không coi
+HAL_OK là xác nhận dữ liệu cảm biến đúng. Đang cần đối chiếu sau ngắt
+nguồn cả bo và ICM; reset MCU không thay thế ngắt nguồn cảm biến.
+
+**Kết luận tới thời điểm đo:** build, nạp và verify firmware đã đạt; test
+nhận dạng ICM20602 chưa đạt. Hai cách phát SPI độc lập cùng gặp ID sai;
+chưa có bằng chứng để sửa ID chuẩn 0x12 thành 0x2E, suy ra chip khác,
+hoặc kết luận cảm biến hỏng. Cần xác minh khởi động lạnh và khi cần đo
+CS/SCK/MOSI/MISO trên dây hoặc đối chiếu nhãn/sơ đồ breakout.
+
+`main.c` hiện tự gọi `HardwareTests_ProbeGyroSpi()` **một lần** nếu Begin
+không tạo được gyro ready. Giữ `HardwareTests_Update()` trong while.
+Nếu dò thành công, chỉ giữ profile có 8/8 ID đúng và toàn bộ readback đúng;
+nếu thất bại, khôi phục SPI CubeMX, motor dừng, không đọc gyro giả.
+Phép chẩn đoán fallback có ghi wake/reset sensor; không đưa vào firmware PID.
+
+Các biến Watch mới:
+
+```cpp
+bench::live.spi_probe_done
+bench::live.spi_probe_selected
+bench::live.spi_trials
+bench::live.spi_tx
+bench::live.spi_rx
+bench::live.gpio_spi_done
+bench::live.gpio_spi_id
+bench::live.probe_registers
+bench::live.probe_values
+bench::live.power_probe_done
+bench::live.power_probe_id
+```
+
+`spi_probe_selected=0` nghĩa là không chọn được profile dùng được; 1..4
+tương ứng bốn dòng mode/divider. `gpio_spi_done=1` nghĩa phép đo hoàn tất,
+không có nghĩa ID đúng; 2 báo DWT timing không hợp lệ. `power_probe_id`
+có 16 byte: tám byte đầu sau wake, tám byte cuối sau reset. `power_probe_done=2`
+báo có giao dịch HAL lỗi. Watch thập phân 46 là hex 0x2E, 18 là 0x12.
+Host test kiểm chứng lựa chọn/khôi phục profile và từ chối ID/readback sai;
+không mô phỏng phần điện của GPIO SPI. Tiêu chí đạt trên bo vẫn là step7,
+ID0x12, ready1, test_started1 và imu_samples tăng khi chạy tự do.
+
 - Configure và build Debug bằng Arm GCC/G++14.3.1: PASS, ELF tạo thành công, không cảnh báo compiler trong lần build này. FLASH29868 B, RAM2912 B theo linker report.
 - Host CTest bench_logic: PASS (1/1). Có test buộc tắt I2C trước đọc ID; reset xóa interface; ID đúng, sai0x2E, ID chập chờn, lỗi HAL và lỗi đọc lại cấu hình. Các test motor/encoder/IR/gyro cũ vẫn chạy.
-- Chưa nạp hoặc đọc ICM bằng bản mới trong lượt rà soát này: firmware đã build cần được nạp lại. Host mock xác minh logic, không mô phỏng điện áp, ringing hoặc timing dây thật.
+- Các số FLASH29868/RAM2912 bên trên thuộc bản audit trước phép dò. Bản chẩn đoán cuối build đạt: FLASH32220 B, RAM3160 B; host CTest 1/1 PASS. Đã nạp các bản chẩn đoán trước đó và verify trên bo như phần đo thực tế; bản cuối thêm xóa trạng thái probe và sửa giá trị expected ID cần nạp lại để ELF/Watch khớp nhau. Host mock không mô phỏng điện áp, ringing hoặc timing dây thật.
 
 Nguồn đối chiếu: [TDK ICM20602 DS-000176 rev1.1](https://product.tdk.com/system/files/dam/doc/product/sensor/mortion-inertial/imu/data_sheet/ds-000176-icm-20602-v1.1.pdf), §6.1 và WHO_AM_I §9.43.

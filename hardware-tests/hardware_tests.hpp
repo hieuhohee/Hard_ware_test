@@ -29,6 +29,11 @@ struct Live {
     uint32_t gpiob_moder, gpiob_afrh, gpiob_idr, gpiob_odr;
     uint32_t spi_trace_size;
     uint8_t spi_tx[7], spi_rx[7]; // Giao dịch đọc gần nhất; cả byte dummy.
+    uint32_t gpio_spi_done, gpio_spi_matches; // 0 chưa chạy, 1 xong, 2 lỗi DWT.
+    uint8_t gpio_spi_id[8]; // ID đọc bằng GPIO độc lập HAL_SPI.
+    uint8_t probe_registers[12], probe_values[12]; // Địa chỉ và dữ liệu map đọc.
+    uint32_t power_probe_done;
+    uint8_t power_probe_id[16]; // [0..7] sau wake, [8..15] sau DEVICE_RESET.
     uint32_t motor_active; // 0 = dừng; 1 = motor trái; 2 = motor phải.
     uint32_t ir_frames, gyro_calibrating, gyro_calibrated;
     uint32_t encoder_counter[2];

@@ -24,6 +24,8 @@ uint8_t HardwareTests_TestEncoders(void);
 uint8_t HardwareTests_TestGyro(void);
 // Chẩn đoán một lần khi init gyro thất bại, motor/IR được dừng trước khi thử.
 // Thử hai mode hợp lệ 0/3 và hai divider 64/256, lưu đủ 8 ID mỗi cấu hình.
+// Riêng F405/SPI2/PB12: nếu thất bại, đối chiếu bằng GPIO và đọc ID sau
+// wake/reset sensor. Đây là bài chẩn đoán bench, không dùng trong vòng PID.
 // Chỉ giữ cấu hình có 8/8 ID đúng và init/readback thành công; lỗi thì trả 0
 // và khôi phục cấu hình SPI cũ. Không gọi trong while hoặc từ ISR.
 uint8_t HardwareTests_ProbeGyroSpi(void);

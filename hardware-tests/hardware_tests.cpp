@@ -234,9 +234,61 @@ static void snapshot_spi() {
     live.gpiob_idr=GPIOB->IDR; live.gpiob_odr=GPIOB->ODR;
 #endif
 }
+// Phép đo độc lập HAL_SPI cho đúng pin SPI2 hiện tại. GPIO được khôi phục
+// nguyên trạng sau phép đo. Không dùng cho handle/pin khác hoặc điều khiển.
+static void probe_gpio_spi() {
+#if defined(STM32F405xx)
+    if(imu_spi->Instance!=SPI2 || imu_cs.port!=GPIOB || imu_cs.pin!=GPIO_PIN_12) return;
+    const uint32_t old_mode=GPIOB->MODER, old_cr1=SPI2->CR1;
+    pin(imu_cs,true);
+    __HAL_SPI_DISABLE(imu_spi);
+    GPIOB->BSRR=uint32_t(GPIO_PIN_13|GPIO_PIN_15)<<16; // Idle mode0: SCK LOW.
+    GPIOB->MODER=(old_mode & ~((3u<<26)|(3u<<28)|(3u<<30))) | (1u<<26)|(1u<<30);
+    bool timing_ok=true;
+    auto wait_half=[&]() {
+        // 2 us mỗi nửa chu kỳ, khoảng 250 kHz. Giới hạn vòng lặp để không
+        // treo nếu DWT bị tắt; kết quả khi lỗi timing không được coi hợp lệ.
+        const uint32_t start=DWT->CYCCNT;
+        unsigned guard=10000;
+        while(uint32_t(DWT->CYCCNT-start)<SystemCoreClock/500000u && --guard) {}
+        if(!guard) timing_ok=false;
+    };
+    auto byte=[&](uint8_t tx) {
+        uint8_t rx=0;
+        for(unsigned bit=0;bit<8;++bit) {
+            GPIOB->BSRR=(tx&0x80) ? GPIO_PIN_15 : uint32_t(GPIO_PIN_15)<<16;
+            tx=uint8_t(tx<<1); wait_half();
+            GPIOB->BSRR=GPIO_PIN_13; // Cạnh lên: sample MISO, MSB trước.
+            wait_half(); rx=uint8_t((rx<<1)|((GPIOB->IDR&GPIO_PIN_14)?1:0));
+            GPIOB->BSRR=uint32_t(GPIO_PIN_13)<<16;
+        }
+        return rx;
+    };
+    auto read=[&](uint8_t reg) {
+        pin(imu_cs,false); wait_half(); byte(uint8_t(reg|0x80));
+        const uint8_t value=byte(0); wait_half(); pin(imu_cs,true); wait_half();
+        return value;
+    };
+    // Cùng lệnh tắt I2C như driver; không reset và không ghi cấu hình gyro.
+    pin(imu_cs,false); wait_half(); byte(0x70); byte(0x40);
+    wait_half(); pin(imu_cs,true); wait_half();
+    live.gpio_spi_matches=0;
+    for(unsigned i=0;i<8;++i) {
+        live.gpio_spi_id[i]=read(0x75);
+        if(live.gpio_spi_id[i]==0x12) ++live.gpio_spi_matches;
+    }
+    const uint8_t regs[]={0x00,0x0F,0x19,0x1A,0x1B,0x37,0x38,0x6B,0x6C,0x70,0x75,0x7F};
+    for(unsigned i=0;i<12;++i) {
+        live.probe_registers[i]=regs[i]; live.probe_values[i]=read(regs[i]);
+    }
+    pin(imu_cs,true); GPIOB->MODER=old_mode; SPI2->CR1=old_cr1;
+    live.gpio_spi_done=timing_ok?1:2;
+#endif
+}
 static bool probe_gyro_spi() {
     stop_everything();
     live.imu_ready=0; live.spi_probe_done=0; live.spi_probe_selected=0;
+    live.gpio_spi_done=live.gpio_spi_matches=live.power_probe_done=0;
     if (!imu_spi || !valid(imu_cs)) return false;
     const auto original=imu_spi->Init;
     const uint32_t dividers[]={SPI_BAUDRATEPRESCALER_64,SPI_BAUDRATEPRESCALER_256};
@@ -270,6 +322,35 @@ static bool probe_gyro_spi() {
         // Vẫn đo đủ bốn dòng để có bằng chứng, chọn dòng hợp lệ đầu tiên.
         if(t.hal_status==HAL_OK && t.matches==8 && selected==4) selected=row;
     }
+    // Nếu không có profile HAL hợp lệ, đo độc lập để tách lớp phần mềm.
+    // Không tự chạy gyro bằng bit-bang; đây chỉ là phép chẩn đoán.
+    if(selected==4) {
+        probe_gpio_spi();
+#if defined(STM32F405xx)
+        // Một số trạng thái nguồn có thể tồn tại qua reset MCU vì ICM vẫn
+        // có nguồn. Đối chiếu ID sau wake và reset sensor, tuyệt đối không
+        // thay giá trị ID được chấp nhận hoặc bật đọc gyro của chip sai ID.
+        bool power_ok=spi_write(0x6B,0x01);
+        HAL_Delay(100);
+        for(unsigned i=0;i<8;++i) {
+            uint8_t id=0; power_ok=spi_read(0x75,&id,1) && power_ok;
+            live.power_probe_id[i]=id; HAL_Delay(2);
+        }
+        power_ok=spi_write(0x6B,0x80) && power_ok;
+        HAL_Delay(100);
+        power_ok=spi_write(0x70,0x40) && power_ok;
+        unsigned reset_matches=0;
+        for(unsigned i=8;i<16;++i) {
+            uint8_t id=0; power_ok=spi_read(0x75,&id,1) && power_ok;
+            live.power_probe_id[i]=id; if(id==0x12) ++reset_matches;
+            HAL_Delay(2);
+        }
+        live.power_probe_done=power_ok?1:2;
+        // Chọn mode0/64 để init lại nếu reset khôi phục ID; imu_init vẫn
+        // kiểm tra tám ID và toàn bộ readback trước khi công bố ready.
+        if(power_ok && reset_matches==8) selected=0;
+#endif
+    }
     imu_spi->Init=original;
     if(selected<4) {
         imu_spi->Init.CLKPolarity=selected<2 ? SPI_POLARITY_LOW : SPI_POLARITY_HIGH;
@@ -286,6 +367,7 @@ static bool probe_gyro_spi() {
         const HAL_StatusTypeDef restore=HAL_SPI_Init(imu_spi);
         if(restore!=HAL_OK) { live.imu_hal_status=uint32_t(restore); imu_bus_failed(); }
         else if(status!=HAL_OK) imu_bus_failed();
+        live.imu_expected_value=0x12; // Tiêu chí ID, không để giá trị ghi interface 0x40.
     }
     snapshot_spi();
     live.spi_probe_done=1;
