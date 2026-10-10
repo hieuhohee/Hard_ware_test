@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "hardware_tests_api.h"
+#include "icm20602_minimal_c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GYRO_IDENTITY_ONLY 2 /* 0: gyro đầy đủ; 1: chỉ đọc ID; 2: đọc ID + roundtrip SPI. */
+#define GYRO_IDENTITY_ONLY 3 /* 0: gyro C++; 1: ID C++; 2: SPI/I2C C++; 3: ID C thuần. */
 
 /* USER CODE END PD */
 
@@ -100,7 +101,9 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   test_started = 0; /* Giữ biến trạng thái trong ELF để Watch đọc đúng ở mode chẩn đoán. */
-#if GYRO_IDENTITY_ONLY
+#if GYRO_IDENTITY_ONLY == 3
+  IcmC_Begin(); /* Bài test C độc lập; không gọi Begin/driver C++ trước bài này. */
+#elif GYRO_IDENTITY_ONLY
   HardwareTests_ReadOnlyGyroProbe(); /* Không gọi Begin trước bài chỉ đọc. */
 #if GYRO_IDENTITY_ONLY == 2
   HardwareTests_ProbeGyroBus(); /* Ghi divider tạm thời rồi khôi phục, không bật gyro. */
@@ -125,7 +128,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+#if GYRO_IDENTITY_ONLY == 3
+    IcmC_Poll(); /* Chỉ kiểm tra ID, xem biến icm_c trong Watch. */
+#else
     HardwareTests_Update();
+#endif
   }
   /* USER CODE END 3 */
 }

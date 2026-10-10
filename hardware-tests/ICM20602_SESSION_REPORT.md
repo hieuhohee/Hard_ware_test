@@ -1,5 +1,9 @@
 # Báo cáo tự kiểm thử ICM trên F405 — 10/10/2026
 
+**Bài đối chiếu hiện tại:** đã thêm và nạp test C thuần, main selector bằng3.
+Xem [MINIMAL_C_TEST.md](MINIMAL_C_TEST.md) và biến `icm_c` trong Watch.
+Phần ghi nhận mode2/SPI/I2C phía dưới là kết quả của phiên trước đó.
+
 **Cập nhật lỗi Watch:** xem [DEBUG_WATCH_FIX.md](DEBUG_WATCH_FIX.md).
 Đã đổi các bản sao byte chẩn đoán sang uint32_t và kiểm chứng GDB/MI
 hiển thị số trên bo. Các địa chỉ/layout RAM trong snapshot bên dưới thuộc

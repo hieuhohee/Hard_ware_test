@@ -47,6 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/hardware_tests.cpp
     Core/Src/test_config.cpp
+    Core/Src/icm20602_minimal_c.c
 )
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_11)
 
