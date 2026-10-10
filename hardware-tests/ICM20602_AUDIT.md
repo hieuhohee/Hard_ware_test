@@ -92,6 +92,12 @@ Nếu chỉ có debugger, gửi lịch sử tám ID cùng ảnh nhãn chân/mã 
 
 ### Kiểm thử trực tiếp trên bo ngày 10/10/2026
 
+**Kết quả mới nhất:** xem [ICM20602_SESSION_REPORT.md](ICM20602_SESSION_REPORT.md).
+Đã đo SPI roundtrip 4/4 mẫu bit đúng và I2C tại0x69 đọc8/8 ID0x2E.
+Main hiện `GYRO_IDENTITY_ONLY=2`: đọc ID → roundtrip divider có khôi phục →
+đối chiếu I2C và trả pin về SPI. Các đoạn nói main đang ở mode1 bên dưới
+là ghi nhận giai đoạn trước; không gọi mode2 là bài chỉ đọc thuần túy.
+
 #### Bài chỉ đọc và đối chiếu nguyên nhân
 
 Sau lần người dùng ngắt/cấp lại nguồn, firmware dò cũ có lịch sử ID gồm
@@ -149,8 +155,9 @@ MSB, mode0, divider64); GPIOB MODER `0xA900AA8F`, AFRH `0x55500000`
 
 GPIO SPI giữ đúng CS PB12/SCK PB13/MISO PB14/MOSI PB15, tạm thay MODER
 rồi khôi phục cả MODER và SPI CR1. Không đổi .ioc hay chân PCB. Đọc một
-số địa chỉ trả giá trị khác nhau: 0x0F→0x78, 0x19→0x00, 0x1A→0x00,
-0x1B→0x80, 0x6B→0x41, 0x70→0x40, 0x75→0x2E. Giá trị này là dữ liệu
+số địa chỉ trả giá trị khác nhau: 0x0F→0x78, 0x19→0x00, 0x1A→0x80,
+0x1B→0x00, 0x6B→0x41, 0x70→0x40, 0x75→0x2E. CONFIG0x1A thực tế là0x80
+(đính chính cách giải mã word little-endian trước đây). Giá trị này là dữ liệu
 đo, không phải bằng chứng xác nhận loại chip; không dùng chúng làm cấu hình.
 
 Ở lần nạp tiếp theo để thử wake/reset, một số mẫu trước reset chuyển sang

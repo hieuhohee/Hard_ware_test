@@ -11,7 +11,7 @@
             "runEntry": "main",
             "serverReset": "Software system reset",
             "serverInterface": "SWD",
-            "serverInterfaceFrequency": "1000",
+            "serverInterfaceFrequency": "140",
             "imagesAndSymbols": [
                 {
                     "imageFileName": "${workspaceFolder}/build/Debug/micromouse_hwtest.elf"

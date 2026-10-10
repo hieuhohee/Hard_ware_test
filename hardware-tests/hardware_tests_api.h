@@ -39,7 +39,7 @@ void HardwareTests_ReadOnlyGyroProbe(void);
 // Không reset sensor, không nhận ID sai là gyro ready, không chạy motor.
 void HardwareTests_ProbeGyroBus(void);
 // Chỉ trên F405/SPI2 với CS PB12: đo ID qua I2C bằng GPIO PB13/PB15,
-// PB14 input kéo xuống chọn AD0=0. CS HIGH, ngõ ra open-drain, khôi phục
+// PB14 input kéo xuống yếu, dò cả địa chỉ 0x68/0x69. CS HIGH, ngõ ra open-drain, khôi phục
 // GPIO/SPI/DWT sau phép đo. Không ghi thanh ghi cấu hình ICM; nếu I2C_IF
 // đã disable thì bỏ qua. Không thay .ioc hoặc dùng trong firmware PID.
 void HardwareTests_ProbeGyroI2c(void);
