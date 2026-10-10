@@ -36,6 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define GYRO_IDENTITY_ONLY 1 /* 1: chỉ đọc ID; 0: test gyro với init đầy đủ. */
 
 /* USER CODE END PD */
 
@@ -98,6 +99,9 @@ int main(void)
   MX_TIM8_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+#if GYRO_IDENTITY_ONLY
+  HardwareTests_ReadOnlyGyroProbe(); /* Không gọi Begin trước bài chỉ đọc. */
+#else
   HardwareTests_Begin();
   test_started = HardwareTests_TestGyro();
   /* Chỉ khi init thường thất bại: dò mode/tốc độ một lần, giữ nguyên pin.
@@ -106,6 +110,7 @@ int main(void)
   {
     test_started = HardwareTests_TestGyro();
   }
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */

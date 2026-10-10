@@ -8,6 +8,7 @@ namespace bench {
 static_assert(kMotorDutyPercent > 0 && kMotorDutyPercent <= 20, "Bench motor duty must be 1..20 percent");
 static_assert(kMotorPulseMs > 0 && kMotorPulseMs <= 500, "Bench pulse must be at most 500 ms");
 volatile Live live{};
+volatile IdentityReadOnly readonly_probe{};
 volatile uint8_t command = 0;
 static uint32_t motor_started, last_report, last_imu, last_encoder;
 static uint32_t old_count[2];
@@ -166,6 +167,34 @@ static bool spi_write(uint8_t reg, uint8_t value) {
     return ok;
 }
 static void imu_step(ImuInitStep step) { live.imu_init_step=uint32_t(step); }
+static void read_only_identity() {
+    stop_everything(); live.imu_ready=0;
+    volatile uint8_t* bytes=reinterpret_cast<volatile uint8_t*>(&readonly_probe);
+    for(unsigned i=0;i<sizeof(readonly_probe);++i) bytes[i]=0;
+    if(!imu_spi || !valid(imu_cs)) return;
+    pin(imu_cs,true); HAL_Delay(100);
+    // Không gọi imu_init, HAL_SPI_Init hoặc spi_write: loại hẳn ảnh hưởng
+    // của ghi I2C_IF, wake/reset và các mode đổi qua lại trong phép dò cũ.
+    for(unsigned i=0;i<32;++i) {
+        uint8_t id=0;
+        const bool ok=spi_read(0x75,&id,1);
+        readonly_probe.id[i]=id;
+        readonly_probe.dummy[i]=live.spi_rx[0];
+        readonly_probe.hal_status[i]=uint8_t(live.imu_hal_status);
+        ++readonly_probe.reads;
+        if(ok && id==0x12) ++readonly_probe.matches;
+        if(!ok) ++readonly_probe.io_errors;
+        HAL_Delay(30);
+    }
+    const uint8_t regs[]={0x00,0x0F,0x19,0x1A,0x1B,0x37,0x38,0x6B,0x6C,0x70,0x75,0x7F};
+    for(unsigned i=0;i<12;++i) {
+        uint8_t value=0;
+        readonly_probe.registers[i]=regs[i];
+        if(!spi_read(regs[i],&value,1)) ++readonly_probe.io_errors;
+        readonly_probe.values[i]=value;
+    }
+    readonly_probe.done=1; // Hoàn tất phép đọc, KHÔNG có nghĩa ID đúng.
+}
 static bool imu_bus_failed() { imu_step(ImuInitStep::BusError); return false; }
 static bool imu_init() {
     if (!imu_spi || !valid(imu_cs)) return false;
@@ -554,6 +583,7 @@ extern "C" uint8_t HardwareTests_TestIR() { return bench::start_sensors(true,fal
 extern "C" uint8_t HardwareTests_TestEncoders() { return bench::start_sensors(false,true,false,false); }
 extern "C" uint8_t HardwareTests_TestGyro() { return bench::start_sensors(false,false,true,false); }
 extern "C" uint8_t HardwareTests_ProbeGyroSpi() { return bench::probe_gyro_spi(); }
+extern "C" void HardwareTests_ReadOnlyGyroProbe() { bench::read_only_identity(); }
 extern "C" uint8_t HardwareTests_TestAllSensors() { return bench::start_sensors(true,true,true,false); }
 extern "C" uint8_t HardwareTests_CalibrateGyro() { return bench::start_sensors(false,false,true,true); }
 extern "C" uint8_t HardwareTests_TestMotorLeft(int direction) { return bench::start_motor(0,direction); }

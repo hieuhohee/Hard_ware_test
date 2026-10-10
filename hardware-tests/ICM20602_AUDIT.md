@@ -92,6 +92,41 @@ Nếu chỉ có debugger, gửi lịch sử tám ID cùng ảnh nhãn chân/mã 
 
 ### Kiểm thử trực tiếp trên bo ngày 10/10/2026
 
+#### Bài chỉ đọc và đối chiếu nguyên nhân
+
+Sau lần người dùng ngắt/cấp lại nguồn, firmware dò cũ có lịch sử ID gồm
+0x2E rồi 0x00; các mode tiếp theo/GPIO SPI có nhiều 0x00. `test_started=0`.
+Điều này không đủ để kết luận sai loại chip từ một ID cố định.
+
+Đã bổ sung `HardwareTests_ReadOnlyGyroProbe()` và đặt
+`GYRO_IDENTITY_ONLY=1` trong USER CODE PD của main.c. Bài này gọi **thay**
+Begin, chỉ đọc 32 ID cách nhau 30 ms và 12 thanh ghi; không ghi I2C_IF,
+không wake/reset ICM, không đổi mode/pin và không khởi động motor. Hiện
+firmware trên bo đang là bài chỉ đọc, không phải test gyro đầy đủ. Vì vậy
+`test_started`, `imu_ready`, `imu_samples` vẫn 0 là chủ ý; xem
+`bench::readonly_probe.done/reads/matches/io_errors/id/hal_status`.
+
+Đã build (FLASH30392 B, RAM3296 B), host CTest 1/1 PASS và nạp/verify trên
+bo. Kết quả ngay sau lần nạp: `done=1`, `reads=32`, `matches=0`,
+`io_errors=0`, ID32/32 là 0x2E, HAL32/32 là HAL_OK, byte dummy đều 0.
+Đang chờ đo lại sau ngắt nguồn với chính firmware chỉ đọc: nạp/reset MCU
+không làm ICM mất nguồn, nên không gọi đây là dữ liệu khởi động lạnh.
+
+| Nguyên nhân được đề nghị kiểm tra | Kết luận hiện có |
+|---|---|
+| Sai loại chip/ID | ID không đúng 0x12 là đã đo được; chưa chứng minh chip thuộc loại nào. Không sửa ID chuẩn để bỏ qua lỗi. |
+| SPI không ổn định | Có ID0x00/0xFF ở một số lần dò trước; HAL_OK không loại trừ dữ liệu sai, floating MISO hoặc sai giao dịch. Bài chỉ đọc mới có 32 ID0x2E ổn định trong khoảng 1 s. |
+| Ghi/readback cấu hình gyro sai | Init bình thường dừng ở kiểm tra ID, chưa tới cấu hình/readback. Bài chỉ đọc vẫn sai ID, nên lỗi cấu hình gyro không giải thích được lỗi nhận dạng hiện tại. |
+| Data Ready/mẫu đứng yên | Chưa đến giai đoạn này vì chưa gyro ready. Bộ đếm 0 hiện không phải bằng chứng Data Ready lỗi. Host test xác minh không đếm lại mẫu cũ khi bit0 reg0x3A=0. |
+| Bias/gyro_raw khác0 | Chưa có mẫu thật hợp lệ để đánh giá. Code trừ bias sau khi quy đổi; hiệu chuẩn lấy 1000 mẫu mới, timeout5s. |
+| Đơn vị/phạm vi đo | Code gyro0x1B=0x18, raw/16.4f sang deg/s; đã kiểm thử giải mã số có dấu X/Y/Z. Chỉ áp dụng sau khi đúng chip và readback đạt. |
+| Nhầm gyro và accel/góc | Code đọc sáu byte từ0x43, không đọc accel; cấu hình0x6C=0x38 tắt accel. Không có góc tuyệt đối từ bài bench này. |
+| Hướng lắp/trục | Không thể gây sai WHO_AM_I; chỉ kiểm tra sau khi đã nhận mẫu, bằng xoay riêng từng trục và đối chiếu trục module. |
+
+Khi kết thúc chẩn đoán, đặt `GYRO_IDENTITY_ONLY=0` rồi build/nạp để trở
+lại bài gyro đầy đủ; không chỉ thêm Begin trước bài chỉ đọc vì sẽ phá mục
+đích cô lập lệnh ghi. Giữ nguyên mapping PB12/13/14/15 và cấu hình CubeMX.
+
 Đã kết nối ST-Link SN `37FF71064E573436C2DE1443`, đọc F405 ID `0x413`,
 điện áp tham chiếu 3.29 V. Sao lưu **toàn bộ Flash 1 MiB** vào
 `tmp/imu-probe/before-probe.bin` trước lần nạp chẩn đoán đầu tiên. File này

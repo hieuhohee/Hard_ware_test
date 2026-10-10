@@ -29,6 +29,11 @@ uint8_t HardwareTests_TestGyro(void);
 // Chỉ giữ cấu hình có 8/8 ID đúng và init/readback thành công; lỗi thì trả 0
 // và khôi phục cấu hình SPI cũ. Không gọi trong while hoặc từ ISR.
 uint8_t HardwareTests_ProbeGyroSpi(void);
+// Chỉ đọc 32 ID trong khoảng 1 s và một số thanh ghi cấu hình.
+// Gọi thay Begin trong bài chẩn đoán khởi động lạnh: không ghi bất kỳ
+// thanh ghi ICM nào, không reset sensor, không đổi SPI mode/pin.
+// Không bắt đầu test gyro/motor; kết quả ở bench::readonly_probe.
+void HardwareTests_ReadOnlyGyroProbe(void);
 uint8_t HardwareTests_TestAllSensors(void);
 
 // Giữ gyro yên: lấy 1000 mẫu mới, timeout 5 s. Sau hiệu chuẩn vẫn đọc gyro.

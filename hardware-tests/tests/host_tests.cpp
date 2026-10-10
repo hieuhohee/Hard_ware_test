@@ -15,6 +15,7 @@ static bool adc_failure, spi_failure;
 static bool unstable_identity, bad_config_readback;
 static bool require_slow_mode3, fail_spi_init;
 static unsigned identity_reads, gyro_config_writes;
+static unsigned spi_write_calls;
 static unsigned uart_receive_calls;
 static uint8_t registers[128]{};
 static GPIO_TypeDef led_ports[5], cs_port;
@@ -57,6 +58,7 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef* spi,uint8_t* tx,uin
     return HAL_OK;
 }
 HAL_StatusTypeDef HAL_SPI_Transmit(SPI_HandleTypeDef*,uint8_t* tx,uint16_t,uint32_t) {
+    ++spi_write_calls;
     CHECK(tx[0]!=0x1C && tx[0]!=0x1D); // Không cấu hình accel.
     if (spi_failure) return HAL_TIMEOUT;
     if (tx[0]==0x1B) ++gyro_config_writes;
@@ -166,6 +168,15 @@ int main() {
     CHECK(!HardwareTests_ProbeGyroSpi()); CHECK(!live.imu_ready);
     CHECK(live.imu_init_step==uint32_t(ImuInitStep::BusError));
     fail_spi_init=false;
+    // Bài chỉ đọc không được phát bất kỳ lệnh ghi nào hoặc báo gyro ready.
+    registers[0x70]=0x40; registers[0x75]=0x12;
+    const unsigned before_readonly=spi_write_calls;
+    HardwareTests_ReadOnlyGyroProbe();
+    CHECK(spi_write_calls==before_readonly && !live.imu_ready && !live.motor_active);
+    CHECK(readonly_probe.done==1 && readonly_probe.reads==32 && readonly_probe.matches==32);
+    CHECK(readonly_probe.io_errors==0 && cs_port.state==1);
+    spi_failure=true; HardwareTests_ReadOnlyGyroProbe(); spi_failure=false;
+    CHECK(readonly_probe.matches==0 && readonly_probe.io_errors==44 && !live.imu_ready);
 
     // API gọi trực tiếp: có UART để log nhưng Update tuyệt đối không nhận lệnh.
     registers[0x75]=0x12; registers[0x3A]=1;

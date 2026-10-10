@@ -45,6 +45,13 @@ struct Live {
     float gyro_dps[3], gyro_bias_dps[3];
 };
 extern volatile Live live;
+// Bài cô lập giao dịch đọc, không dùng kết quả này để báo gyro ready.
+struct IdentityReadOnly {
+    uint32_t done, reads, matches, io_errors;
+    uint8_t id[32], dummy[32], hal_status[32];
+    uint8_t registers[12], values[12];
+};
+extern volatile IdentityReadOnly readonly_probe;
 // Ghi mã ASCII vào command trong debugger: '1'=49, 'i'=105, 's'=115...
 // Không tự chạy motor sau khởi động. Init/ poll chỉ gọi từ luồng main.
 extern volatile uint8_t command;
