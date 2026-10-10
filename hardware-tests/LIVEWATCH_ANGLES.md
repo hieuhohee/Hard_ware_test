@@ -1,5 +1,9 @@
 # Xem góc roll, pitch, yaw trên Live Watch
 
+Kết quả test thực mới: [ANGLES_HARDWARE_CHECK.md](ANGLES_HARDWARE_CHECK.md).
+Đã đọc được góc và hiệu chuẩn, nhưng lần quay về mốc có mất đoạn mẫu,
+`tracking_continuous=0`; chưa xác nhận góc đủ chính xác cho PID quay90°.
+
 Bài test gyro C mode5 đã có tính góc. Giữ nguyên SPI2 PB13/PB14/PB15,
 CS PB12 và cấu hình chân cũ. Chỉ gyro XYZ được bật, accel vẫn standby.
 Main tự gọi hiệu chuẩn400 mẫu sau khởi tạo; trong while vẫn chỉ gọi
