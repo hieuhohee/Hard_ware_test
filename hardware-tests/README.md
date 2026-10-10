@@ -7,6 +7,8 @@ Mọi chân và handle đều để trống trong `test_config.cpp`; không dùn
 
 **Chưa có PCB, muốn thử từng module rời:** xem [MODULES_GUIDE.md](MODULES_GUIDE.md) và mẫu [test_config.modules.cpp](examples/test_config.modules.cpp). Dùng project bench riêng; không sửa vòng lặp của dự án PID. Mẫu cấu hình phải thay cho `test_config.cpp`, không compile cả hai cùng lúc.
 
+**Đã có file CubeMX cho STM32F405RGT6:** mở [micromouse_hwtest.ioc](cubemx/micromouse_hwtest/micromouse_hwtest.ioc). Xem [hướng dẫn sinh code và ghép bộ test](cubemx/README.md) để dùng đúng bảng chân cũ. File này đã cấu hình ngoại vi; vẫn cần thêm mã C++ và chọn các cờ module. Bản gốc người dùng gửi được giữ trong `cubemx/original/`.
+
 ## Kết nối phần cứng thực và bắt đầu test module rời
 
 Phần này dùng mẫu `examples/test_config.modules.cpp`, với các cờ chọn module; `test_config.cpp` gốc vẫn để trống. Chỉ cắm và bật cờ cho phần cứng muốn thử. Các lệnh bên dưới thuộc **firmware bench**, khác với menu của dự án PID: `e` ở đây là xem encoder, không phải arm; `1` trực tiếp chạy xung motor, không cần `b`.
