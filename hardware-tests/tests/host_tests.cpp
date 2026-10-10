@@ -13,6 +13,7 @@ uint32_t SystemCoreClock=168000000;
 static uint32_t tick, adc_channel;
 static bool adc_failure, spi_failure;
 static bool unstable_identity, bad_config_readback;
+static bool require_slow_mode3, fail_spi_init;
 static unsigned identity_reads, gyro_config_writes;
 static unsigned uart_receive_calls;
 static uint8_t registers[128]{};
@@ -33,7 +34,8 @@ HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef*,uint32_t) { retur
 uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef*) { return led_ports[adc_channel].state?300:100; }
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) { return HAL_OK; }
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) { ++uart_receive_calls; return HAL_TIMEOUT; }
-HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef*,uint8_t* tx,uint8_t* rx,uint16_t n,uint32_t) {
+HAL_StatusTypeDef HAL_SPI_Init(SPI_HandleTypeDef*) { return fail_spi_init ? HAL_ERROR : HAL_OK; }
+HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef* spi,uint8_t* tx,uint8_t* rx,uint16_t n,uint32_t) {
     // Chặn hồi quy sang đọc accel/temp; gói gyro phải đủ ba trục, 6 byte.
     const uint8_t reg=tx[0]&0x7F;
     CHECK(reg<0x3B || reg>0x42);
@@ -46,6 +48,9 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef*,uint8_t* tx,uint8_t
         // Driver cũ đọc ID trước nên không thể vượt qua test này.
         if (!(registers[0x70]&0x40)) rx[1]=0;
         else if (unstable_identity && (identity_reads%2)==0) rx[1]=0x2E;
+        else if(require_slow_mode3 && (spi->Init.CLKPolarity!=SPI_POLARITY_HIGH ||
+                spi->Init.CLKPhase!=SPI_PHASE_2EDGE ||
+                spi->Init.BaudRatePrescaler!=SPI_BAUDRATEPRESCALER_256)) rx[1]=0x2E;
     }
     if (reg==0x1B && bad_config_readback) rx[1]=0;
     if (reg==0x3A && !(registers[0x38]&1)) rx[1]=0; // Data ready chưa được enable.
@@ -136,6 +141,31 @@ int main() {
     CHECK(!live.imu_ready && live.imu_init_step==uint32_t(ImuInitStep::VerifyError));
     CHECK(live.imu_last_reg==0x1B && live.imu_expected_value==0x18 && live.imu_actual_value==0);
     bad_config_readback=false;
+
+    // Dò thực sự bốn cấu hình: chỉ dòng mode3/256 trả ID đúng; sau đó
+    // init/readback phải đạt trước khi công bố ready. Không chạy motor.
+    require_slow_mode3=true; init(); CHECK(!live.imu_ready);
+    CHECK(HardwareTests_ProbeGyroSpi());
+    CHECK(live.spi_probe_done==1 && live.spi_probe_selected==4 && live.imu_ready);
+    CHECK(!live.motor_active && live.imu_id_reads==8 && live.imu_id_matches==8);
+    for(unsigned i=0;i<4;++i) CHECK(live.spi_trials[i].matches==(i==3?8u:0u));
+    CHECK(live.spi_tx[0]==0xB8 && live.spi_trace_size==2); // Readback cuối INT_ENABLE.
+    require_slow_mode3=false;
+    // Sai ID ở cả bốn dòng: không báo ready, khôi phục mode/divider cũ.
+    spi.Init.CLKPolarity=SPI_POLARITY_LOW; spi.Init.CLKPhase=SPI_PHASE_1EDGE;
+    spi.Init.BaudRatePrescaler=SPI_BAUDRATEPRESCALER_64;
+    registers[0x75]=0x2E; init(); CHECK(!HardwareTests_ProbeGyroSpi());
+    CHECK(!live.imu_ready && live.spi_probe_selected==0);
+    CHECK(spi.Init.CLKPolarity==SPI_POLARITY_LOW && spi.Init.BaudRatePrescaler==SPI_BAUDRATEPRESCALER_64);
+    registers[0x75]=0x12; unstable_identity=true; identity_reads=0;
+    CHECK(!HardwareTests_ProbeGyroSpi()); CHECK(!live.imu_ready);
+    unstable_identity=false; bad_config_readback=true;
+    CHECK(!HardwareTests_ProbeGyroSpi()); CHECK(!live.imu_ready);
+    CHECK(live.imu_init_step==uint32_t(ImuInitStep::VerifyError));
+    bad_config_readback=false; fail_spi_init=true;
+    CHECK(!HardwareTests_ProbeGyroSpi()); CHECK(!live.imu_ready);
+    CHECK(live.imu_init_step==uint32_t(ImuInitStep::BusError));
+    fail_spi_init=false;
 
     // API gọi trực tiếp: có UART để log nhưng Update tuyệt đối không nhận lệnh.
     registers[0x75]=0x12; registers[0x3A]=1;

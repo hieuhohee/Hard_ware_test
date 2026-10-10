@@ -100,6 +100,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HardwareTests_Begin();
   test_started = HardwareTests_TestGyro();
+  /* Chỉ khi init thường thất bại: dò mode/tốc độ một lần, giữ nguyên pin.
+     Hàm dò không báo thành công chỉ vì HAL_OK: phải đúng ID và readback. */
+  if (!test_started && HardwareTests_ProbeGyroSpi())
+  {
+    test_started = HardwareTests_TestGyro();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */

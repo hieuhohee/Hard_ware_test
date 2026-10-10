@@ -144,6 +144,8 @@ static bool spi_read(uint8_t reg, uint8_t* out, uint16_t n) {
     live.imu_last_reg = reg;
     const bool ok = status == HAL_OK;
     pin(imu_cs, true);
+    live.spi_trace_size=n+1;
+    for (unsigned i=0; i<n+1u; ++i) { live.spi_tx[i]=tx[i]; live.spi_rx[i]=rx[i]; }
     if (ok) {
         std::memcpy(out, rx+1, n);
         live.imu_actual_value = rx[1]; // Byte đầu tiên của dữ liệu, không phải byte dummy.
@@ -174,6 +176,8 @@ static bool imu_init() {
     imu_step(ImuInitStep::Interface);
     if (!spi_write(0x70, 0x40)) return imu_bus_failed();
     imu_step(ImuInitStep::Identity);
+    // Có thể init lại sau phép dò SPI; không cộng dồn ID của lần thất bại trước.
+    live.imu_id_reads=live.imu_id_matches=0;
     live.imu_expected_value=0x12;
     // HAL_OK chỉ xác nhận MCU truyền xong. Đọc 8 giao dịch riêng để biết
     // ID có ổn định không; không lấy đa số để che giấu các mẫu sai/nhiễu.
@@ -218,6 +222,74 @@ static bool imu_init() {
     }
     imu_step(ImuInitStep::Ready);
     return true;
+}
+// Chụp thanh ghi MCU để đối chiếu pinmux/clock thực với file .ioc.
+// Guard chỉ dành cho MCU: host test không giả vờ kiểm chứng GPIO vật lý.
+static void snapshot_spi() {
+#if defined(STM32F405xx)
+    live.spi_cr1=imu_spi->Instance->CR1;
+    live.spi_cr2=imu_spi->Instance->CR2;
+    live.spi_sr=imu_spi->Instance->SR;
+    live.gpiob_moder=GPIOB->MODER; live.gpiob_afrh=GPIOB->AFR[1];
+    live.gpiob_idr=GPIOB->IDR; live.gpiob_odr=GPIOB->ODR;
+#endif
+}
+static bool probe_gyro_spi() {
+    stop_everything();
+    live.imu_ready=0; live.spi_probe_done=0; live.spi_probe_selected=0;
+    if (!imu_spi || !valid(imu_cs)) return false;
+    const auto original=imu_spi->Init;
+    const uint32_t dividers[]={SPI_BAUDRATEPRESCALER_64,SPI_BAUDRATEPRESCALER_256};
+    unsigned selected=4;
+    for (unsigned row=0; row<4; ++row) {
+        volatile SpiTrial& t=live.spi_trials[row];
+        t.mode=row<2 ? 0 : 3; t.divider=(row%2)==0 ? 64 : 256;
+        t.matches=0; t.hal_status=HAL_OK;
+        for(unsigned i=0;i<8;++i) { t.id[i]=0; t.dummy[i]=0; }
+        // CS giữ HIGH khi thay mode. HAL Init giữ cấu hình master/8-bit/MSB
+        // của CubeMX, chỉ đổi CPOL/CPHA và divider; không đổi chân hoặc MSP.
+        pin(imu_cs,true);
+        imu_spi->Init=original;
+        imu_spi->Init.CLKPolarity=row<2 ? SPI_POLARITY_LOW : SPI_POLARITY_HIGH;
+        imu_spi->Init.CLKPhase=row<2 ? SPI_PHASE_1EDGE : SPI_PHASE_2EDGE;
+        imu_spi->Init.BaudRatePrescaler=dividers[row%2];
+        HAL_StatusTypeDef status=HAL_SPI_Init(imu_spi);
+        t.hal_status=uint32_t(status);
+        if(status!=HAL_OK) continue;
+        HAL_Delay(2);
+        // Chỉ viết thanh ghi interface trước khi nhận ID đúng; không reset
+        // hoặc cấu hình gyro của thiết bị chưa xác định.
+        if(!spi_write(0x70,0x40)) { t.hal_status=live.imu_hal_status; continue; }
+        for(unsigned i=0;i<8;++i) {
+            uint8_t id=0;
+            if(!spi_read(0x75,&id,1)) { t.hal_status=live.imu_hal_status; break; }
+            t.id[i]=id; t.dummy[i]=live.spi_rx[0];
+            if(id==0x12) ++t.matches;
+            HAL_Delay(2);
+        }
+        // Vẫn đo đủ bốn dòng để có bằng chứng, chọn dòng hợp lệ đầu tiên.
+        if(t.hal_status==HAL_OK && t.matches==8 && selected==4) selected=row;
+    }
+    imu_spi->Init=original;
+    if(selected<4) {
+        imu_spi->Init.CLKPolarity=selected<2 ? SPI_POLARITY_LOW : SPI_POLARITY_HIGH;
+        imu_spi->Init.CLKPhase=selected<2 ? SPI_PHASE_1EDGE : SPI_PHASE_2EDGE;
+        imu_spi->Init.BaudRatePrescaler=dividers[selected%2];
+    }
+    const HAL_StatusTypeDef status=HAL_SPI_Init(imu_spi);
+    live.imu_hal_status=uint32_t(status);
+    bool ok=status==HAL_OK && selected<4 && imu_init();
+    if(ok) { live.spi_probe_selected=selected+1; live.imu_ready=1; }
+    else {
+        // Cả lỗi ID và lỗi đọc lại đều không được coi là cấu hình usable.
+        imu_spi->Init=original;
+        const HAL_StatusTypeDef restore=HAL_SPI_Init(imu_spi);
+        if(restore!=HAL_OK) { live.imu_hal_status=uint32_t(restore); imu_bus_failed(); }
+        else if(status!=HAL_OK) imu_bus_failed();
+    }
+    snapshot_spi();
+    live.spi_probe_done=1;
+    return ok;
 }
 static int16_t signed_be(const uint8_t* p) {
     const uint16_t u = uint16_t((uint16_t(p[0])<<8) | p[1]);
@@ -399,6 +471,7 @@ extern "C" void HardwareTests_Update() { bench::poll_impl(false); }
 extern "C" uint8_t HardwareTests_TestIR() { return bench::start_sensors(true,false,false,false); }
 extern "C" uint8_t HardwareTests_TestEncoders() { return bench::start_sensors(false,true,false,false); }
 extern "C" uint8_t HardwareTests_TestGyro() { return bench::start_sensors(false,false,true,false); }
+extern "C" uint8_t HardwareTests_ProbeGyroSpi() { return bench::probe_gyro_spi(); }
 extern "C" uint8_t HardwareTests_TestAllSensors() { return bench::start_sensors(true,true,true,false); }
 extern "C" uint8_t HardwareTests_CalibrateGyro() { return bench::start_sensors(false,false,true,true); }
 extern "C" uint8_t HardwareTests_TestMotorLeft(int direction) { return bench::start_motor(0,direction); }

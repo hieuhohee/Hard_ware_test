@@ -22,6 +22,11 @@ void HardwareTests_Update(void);
 uint8_t HardwareTests_TestIR(void);
 uint8_t HardwareTests_TestEncoders(void);
 uint8_t HardwareTests_TestGyro(void);
+// Chẩn đoán một lần khi init gyro thất bại, motor/IR được dừng trước khi thử.
+// Thử hai mode hợp lệ 0/3 và hai divider 64/256, lưu đủ 8 ID mỗi cấu hình.
+// Chỉ giữ cấu hình có 8/8 ID đúng và init/readback thành công; lỗi thì trả 0
+// và khôi phục cấu hình SPI cũ. Không gọi trong while hoặc từ ISR.
+uint8_t HardwareTests_ProbeGyroSpi(void);
 uint8_t HardwareTests_TestAllSensors(void);
 
 // Giữ gyro yên: lấy 1000 mẫu mới, timeout 5 s. Sau hiệu chuẩn vẫn đọc gyro.
