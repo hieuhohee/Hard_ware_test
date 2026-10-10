@@ -12,6 +12,8 @@ CoreDebugType fake_debug;
 uint32_t SystemCoreClock=168000000;
 static uint32_t tick, adc_channel;
 static bool adc_failure, spi_failure;
+static bool unstable_identity, bad_config_readback;
+static unsigned identity_reads, gyro_config_writes;
 static unsigned uart_receive_calls;
 static uint8_t registers[128]{};
 static GPIO_TypeDef led_ports[5], cs_port;
@@ -38,13 +40,24 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef*,uint8_t* tx,uint8_t
     if (reg==0x43) CHECK(n==7); // Sáu byte dữ liệu + một byte lệnh.
     if (spi_failure) return HAL_TIMEOUT;
     rx[0]=0; for(unsigned i=1;i<n;++i) rx[i]=registers[(tx[0]&0x7F)+i-1];
+    if (reg==0x75) {
+        ++identity_reads;
+        // Mô phỏng chip yêu cầu I2C_IF_DIS trước khi đọc qua SPI.
+        // Driver cũ đọc ID trước nên không thể vượt qua test này.
+        if (!(registers[0x70]&0x40)) rx[1]=0;
+        else if (unstable_identity && (identity_reads%2)==0) rx[1]=0x2E;
+    }
+    if (reg==0x1B && bad_config_readback) rx[1]=0;
     if (reg==0x3A && !(registers[0x38]&1)) rx[1]=0; // Data ready chưa được enable.
     return HAL_OK;
 }
 HAL_StatusTypeDef HAL_SPI_Transmit(SPI_HandleTypeDef*,uint8_t* tx,uint16_t,uint32_t) {
     CHECK(tx[0]!=0x1C && tx[0]!=0x1D); // Không cấu hình accel.
     if (spi_failure) return HAL_TIMEOUT;
-    registers[tx[0]]=tx[1]; return HAL_OK;
+    if (tx[0]==0x1B) ++gyro_config_writes;
+    registers[tx[0]]=tx[1];
+    if (tx[0]==0x6B && tx[1]==0x80) registers[0x70]=0; // Reset interface.
+    return HAL_OK;
 }
 static void step(uint32_t ms=1) { HAL_Delay(ms); bench::poll(); }
 static void send(char c) { bench::command=uint8_t(c); bench::poll(); }
@@ -68,6 +81,9 @@ int main() {
     registers[0x47]=0x80; registers[0x48]=0x00; // Gyro Z=-32768.
     init();
     CHECK(live.motor_ready_mask==3 && live.encoder_ready_mask==3 && live.ir_ready_mask==31 && live.imu_ready);
+    CHECK(live.imu_init_step==uint32_t(ImuInitStep::Ready));
+    CHECK(live.imu_id_reads==8 && live.imu_id_matches==8);
+    for (unsigned i=0;i<8;++i) CHECK(live.imu_id_history[i]==0x12);
     CHECK(registers[0x6C]==0x38); // Accel standby, gyro XYZ bật.
     CHECK(registers[0x37]==0x20 && registers[0x38]==0x01); // Polling cần bật nguồn sự kiện.
     CHECK(live.motor_active==0);
@@ -98,6 +114,28 @@ int main() {
     CHECK(!live.gyro_calibrating && !live.gyro_calibrated);
     spi_failure=true; send('g'); step(); CHECK(!live.imu_ready && cs_port.state==1);
     spi_failure=false; registers[0x75]=0x68; init(); CHECK(!live.imu_ready && live.imu_whoami==0x68);
+    CHECK(live.imu_init_step==uint32_t(ImuInitStep::IdentityRejected));
+    CHECK(live.imu_id_reads==8 && live.imu_id_matches==0 && live.imu_hal_status==HAL_OK);
+    // ID 46 như ảnh thực tế: bus truyền xong nhưng driver phải giữ not-ready.
+    const unsigned before_config=gyro_config_writes;
+    registers[0x75]=0x2E; init();
+    CHECK(!live.imu_ready && live.imu_whoami==46 && live.io_errors==0);
+    CHECK(live.imu_id_matches==0 && gyro_config_writes==before_config);
+    // ID chập chờn phải bị từ chối, không lấy đa số để báo ready giả.
+    registers[0x75]=0x12; unstable_identity=true; identity_reads=0; init();
+    CHECK(!live.imu_ready && live.imu_id_reads==8 && live.imu_id_matches==4);
+    CHECK(live.imu_id_history[0]==0x12 && live.imu_id_history[1]==0x2E);
+    CHECK(gyro_config_writes==before_config);
+    unstable_identity=false;
+    // Phân biệt lỗi HAL với sai ID, rồi phân biệt lỗi readback thanh ghi.
+    spi_failure=true; init();
+    CHECK(live.imu_init_step==uint32_t(ImuInitStep::BusError));
+    CHECK(live.imu_last_reg==0x70 && live.imu_hal_status==HAL_TIMEOUT && live.imu_id_reads==0);
+    CHECK(cs_port.state==1);
+    spi_failure=false; bad_config_readback=true; init();
+    CHECK(!live.imu_ready && live.imu_init_step==uint32_t(ImuInitStep::VerifyError));
+    CHECK(live.imu_last_reg==0x1B && live.imu_expected_value==0x18 && live.imu_actual_value==0);
+    bad_config_readback=false;
 
     // API gọi trực tiếp: có UART để log nhưng Update tuyệt đối không nhận lệnh.
     registers[0x75]=0x12; registers[0x3A]=1;

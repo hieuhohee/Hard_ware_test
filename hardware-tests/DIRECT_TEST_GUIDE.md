@@ -1,5 +1,7 @@
 # Test bằng hàm trực tiếp — không nhập lệnh
 
+Nếu gyro không ready hoặc WHO_AM_I khác 0x12, xem [ICM20602_AUDIT.md](ICM20602_AUDIT.md). Bản cập nhật có lịch sử tám ID và mã bước init để phân biệt lỗi ID, lỗi HAL và lỗi readback; cần nạp lại ELF mới để xem các trường này.
+
 Mỗi lần muốn đổi bài, thay **một dòng chọn hàm test**, build và nạp lại. Không cần copy/sửa nội dung driver cảm biến hoặc comment các phần trong `hardware_tests.cpp`.
 
 API nằm trong [hardware_tests_api.h](hardware_tests_api.h), triển khai C++ trong `hardware_tests.cpp`. Header API dùng được cả từ `main.c` và `main.cpp`.

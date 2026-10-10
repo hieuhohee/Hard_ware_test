@@ -1,5 +1,7 @@
 # Kết quả kiểm tra
 
+Rà soát ICM20602 ngày 10/10/2026: mốc backup `6650a89`. Đã sửa thứ tự I2C_IF_DIS trước ID, thêm tám mẫu ID và mã lỗi init; tests ID sai/chập chờn/HAL/readback PASS. Configure/build firmware thật bằng Arm GCC14.3.1 PASS (FLASH29868 B, RAM2912 B); CTest host PASS1/1. Xem [ICM20602_AUDIT.md](ICM20602_AUDIT.md). Các kết quả “chưa build ARM” phía dưới thuộc các lần kiểm tra trước. Bản mới chưa được nạp/đo trên module trong lượt rà soát này.
+
 Cập nhật 10/10/2026:
 
 - Thêm API gọi hàm trực tiếp Begin/Update/Test.../Stop; giữ driver và bảng chân hiện tại.

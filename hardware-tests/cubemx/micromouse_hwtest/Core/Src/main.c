@@ -26,9 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-/* USER CODE BEGIN Includes */
 #include "hardware_tests_api.h"
-/* USER CODE END Includes */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,8 +98,8 @@ int main(void)
   MX_TIM8_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-HardwareTests_Begin();
-test_started = HardwareTests_TestGyro();
+  HardwareTests_Begin();
+  test_started = HardwareTests_TestGyro();
   /* USER CODE END 2 */
 
   /* Infinite loop */

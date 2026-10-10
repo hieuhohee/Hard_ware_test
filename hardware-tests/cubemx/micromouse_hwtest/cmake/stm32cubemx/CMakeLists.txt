@@ -73,14 +73,8 @@ set(MX_LINK_LIBS
 # Interface library for includes and symbols
 add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
-# Header của ứng dụng.
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    Core/Inc
-)
 
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
-# Code test yêu cầu C++11 hoặc mới hơn.
-target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_11)
 # Create STM32_Drivers static library
 add_library(STM32_Drivers OBJECT)
 target_sources(STM32_Drivers PRIVATE ${STM32_Drivers_Src})
@@ -99,10 +93,6 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${MX_LINK_DIRS})
 # Add libraries to the project
 target_link_libraries(${CMAKE_PROJECT_NAME} ${MX_LINK_LIBS})
 
-target_link_libraries(${CMAKE_PROJECT_NAME}
-    stm32cubemx
-    # ...
-)
 
 # Add the map file to the list of files to be removed with 'clean' target
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES ADDITIONAL_CLEAN_FILES ${CMAKE_PROJECT_NAME}.map)

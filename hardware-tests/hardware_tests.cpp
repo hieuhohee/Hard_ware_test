@@ -136,48 +136,87 @@ static void ir_update() {
 }
 static bool spi_read(uint8_t reg, uint8_t* out, uint16_t n) {
     uint8_t tx[7]{}, rx[7]{}; // Tối đa một byte lệnh + sáu byte gyro XYZ.
-    if (!imu_spi || !valid(imu_cs) || n > 6) return false;
+    if (!imu_spi || !valid(imu_cs) || !out || n==0 || n > 6) return false;
     tx[0] = reg | 0x80;
     pin(imu_cs, false);
-    const bool ok = HAL_SPI_TransmitReceive(imu_spi, tx, rx, n+1, kIoTimeoutMs) == HAL_OK;
+    const HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(imu_spi, tx, rx, n+1, kIoTimeoutMs);
+    live.imu_hal_status = uint32_t(status);
+    live.imu_last_reg = reg;
+    const bool ok = status == HAL_OK;
     pin(imu_cs, true);
-    if (ok) std::memcpy(out, rx+1, n); else ++live.io_errors;
+    if (ok) {
+        std::memcpy(out, rx+1, n);
+        live.imu_actual_value = rx[1]; // Byte đầu tiên của dữ liệu, không phải byte dummy.
+    } else ++live.io_errors;
     return ok;
 }
 static bool spi_write(uint8_t reg, uint8_t value) {
+    if (!imu_spi || !valid(imu_cs)) return false;
     uint8_t tx[2] = {uint8_t(reg & 0x7F), value};
     pin(imu_cs, false);
-    const bool ok = HAL_SPI_Transmit(imu_spi, tx, 2, kIoTimeoutMs) == HAL_OK;
+    const HAL_StatusTypeDef status = HAL_SPI_Transmit(imu_spi, tx, 2, kIoTimeoutMs);
+    live.imu_hal_status = uint32_t(status);
+    live.imu_last_reg = reg;
+    live.imu_expected_value = value;
+    const bool ok = status == HAL_OK;
     pin(imu_cs, true);
     if (!ok) ++live.io_errors;
     return ok;
 }
+static void imu_step(ImuInitStep step) { live.imu_init_step=uint32_t(step); }
+static bool imu_bus_failed() { imu_step(ImuInitStep::BusError); return false; }
 static bool imu_init() {
     if (!imu_spi || !valid(imu_cs)) return false;
     pin(imu_cs, true); HAL_Delay(100);
-    uint8_t id = 0;
-    if (!spi_read(0x75, &id, 1)) return false;
-    live.imu_whoami = id;
-    if (id != 0x12) return false; // Chỉ ICM20602; KHÔNG tự coi mọi MPU là cùng chip.
-    if (!spi_write(0x6B, 0x80)) return false; // DEVICE_RESET.
+    // Datasheet DS-000176 §6.1: tắt I2C ngay sau thời gian startup để giữ
+    // giao diện SPI. Chỉ viết I2C_IF ở đây; các thanh ghi gyro chỉ được cấu
+    // hình sau khi nhận đúng ID ICM20602. Không tự nhận mọi MPU là cùng chip.
+    imu_step(ImuInitStep::Interface);
+    if (!spi_write(0x70, 0x40)) return imu_bus_failed();
+    imu_step(ImuInitStep::Identity);
+    live.imu_expected_value=0x12;
+    // HAL_OK chỉ xác nhận MCU truyền xong. Đọc 8 giao dịch riêng để biết
+    // ID có ổn định không; không lấy đa số để che giấu các mẫu sai/nhiễu.
+    for (unsigned i=0; i<8; ++i) {
+        uint8_t id=0;
+        if (!spi_read(0x75, &id, 1)) return imu_bus_failed();
+        live.imu_id_history[i]=id;
+        ++live.imu_id_reads;
+        if (id==0x12) ++live.imu_id_matches;
+        live.imu_whoami=id;
+        if (i!=7) HAL_Delay(2); // Init một lần, motor đã dừng.
+    }
+    if (live.imu_id_matches!=8) {
+        imu_step(ImuInitStep::IdentityRejected);
+        return false;
+    }
+    imu_step(ImuInitStep::Reset);
+    if (!spi_write(0x6B, 0x80)) return imu_bus_failed(); // DEVICE_RESET.
     HAL_Delay(100);
-    if (!spi_write(0x70, 0x40) || // I2C_IF_DIS của ICM20602 nằm ở 0x70.
-        !spi_write(0x6B, 0x01) || // Thoát sleep, chọn clock tự động.
+    // Reset xóa cấu hình interface, vì vậy phải tắt I2C lại trước bước tiếp.
+    if (!spi_write(0x70, 0x40)) return imu_bus_failed();
+    imu_step(ImuInitStep::Configure);
+    if (!spi_write(0x6B, 0x01) || // Thoát sleep, chọn clock tự động.
         !spi_write(0x6C, 0x38) || // PWR_MGMT_2: STBY_XA/YA/ZA=1, tắt accel;
                                  // STBY_XG/YG/ZG=0, giữ ba trục gyro hoạt động.
         !spi_write(0x1A, 0x02) || // Gyro DLPF 92 Hz, nguồn mẫu 1 kHz.
         !spi_write(0x19, 0x00) || // Divider=0: 1 kHz.
         !spi_write(0x1B, 0x18) || // Gyro ±2000 dps => 16.4 LSB/(deg/s).
         !spi_write(0x37, 0x20) || // INT dạng latch, chỉ clear khi đọc INT_STATUS.
-        !spi_write(0x38, 0x01)) return false; // Bật nguồn DATA_RDY trong sensor;
+        !spi_write(0x38, 0x01)) return imu_bus_failed(); // Bật nguồn DATA_RDY trong sensor;
                                             // MCU vẫn polling SPI, không cần EXTI.
     HAL_Delay(100); // Chỉ init khi motor đã dừng; không delay trong bài motor.
+    imu_step(ImuInitStep::Verify);
     // Đọc lại thanh ghi để không báo ready khi ghi cấu hình thất bại âm thầm.
     const uint8_t regs[] = {0x70,0x6B,0x6C,0x1A,0x19,0x1B,0x37,0x38};
     const uint8_t vals[] = {0x40,0x01,0x38,0x02,0x00,0x18,0x20,0x01};
     for (unsigned i=0; i<sizeof(regs); ++i) {
-        uint8_t v=0; if (!spi_read(regs[i], &v, 1) || v != vals[i]) return false;
+        live.imu_expected_value=vals[i];
+        uint8_t v=0;
+        if (!spi_read(regs[i], &v, 1)) return imu_bus_failed();
+        if (v != vals[i]) { imu_step(ImuInitStep::VerifyError); return false; }
     }
+    imu_step(ImuInitStep::Ready);
     return true;
 }
 static int16_t signed_be(const uint8_t* p) {
@@ -187,11 +226,11 @@ static int16_t signed_be(const uint8_t* p) {
 static void imu_update() {
     if (!live.imu_ready) return;
     uint8_t ready=0, data[6];
-    if (!spi_read(0x3A, &ready, 1)) { live.imu_ready=0; live.gyro_calibrating=0; return; }
+    if (!spi_read(0x3A, &ready, 1)) { live.imu_ready=0; live.gyro_calibrating=0; imu_bus_failed(); return; }
     if (!(ready & 1)) return; // Không đếm mẫu cũ lặp lại trong hiệu chuẩn.
     // GYRO_XOUT_H=0x43: đọc liền XH, XL, YH, YL, ZH, ZL.
     // Không truy cập vùng dữ liệu accel hoặc nhiệt độ.
-    if (!spi_read(0x43, data, 6)) { live.imu_ready=0; live.gyro_calibrating=0; return; }
+    if (!spi_read(0x43, data, 6)) { live.imu_ready=0; live.gyro_calibrating=0; imu_bus_failed(); return; }
     ++live.imu_samples;
     for (unsigned i=0; i<3; ++i) {
         live.gyro_raw[i] = signed_be(data+2*i);

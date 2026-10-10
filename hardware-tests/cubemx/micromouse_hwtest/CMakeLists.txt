@@ -25,11 +25,11 @@ set(CMAKE_PROJECT_NAME micromouse_hwtest)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Core project settings
-project(${CMAKE_PROJECT_NAME})
+project(${CMAKE_PROJECT_NAME} LANGUAGES C CXX ASM)
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Enable CMake support for ASM and C languages
-enable_language(C ASM)
+enable_language(C CXX ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -48,10 +48,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/hardware_tests.cpp
     Core/Src/test_config.cpp
 )
+target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_11)
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc
 )
 
 # Add project symbols (macros)
