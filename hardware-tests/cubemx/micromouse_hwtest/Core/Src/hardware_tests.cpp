@@ -9,6 +9,7 @@ static_assert(kMotorDutyPercent > 0 && kMotorDutyPercent <= 20, "Bench motor dut
 static_assert(kMotorPulseMs > 0 && kMotorPulseMs <= 500, "Bench pulse must be at most 500 ms");
 volatile Live live{};
 volatile IdentityReadOnly readonly_probe{};
+volatile SpiRoundTrip bus_probe{};
 volatile uint8_t command = 0;
 static uint32_t motor_started, last_report, last_imu, last_encoder;
 static uint32_t old_count[2];
@@ -167,6 +168,52 @@ static bool spi_write(uint8_t reg, uint8_t value) {
     return ok;
 }
 static void imu_step(ImuInitStep step) { live.imu_init_step=uint32_t(step); }
+static void probe_spi_roundtrip() {
+    stop_everything(); live.imu_ready=0;
+    volatile uint8_t* bytes=reinterpret_cast<volatile uint8_t*>(&bus_probe);
+    for(unsigned i=0;i<sizeof(bus_probe);++i) bytes[i]=0;
+    if(!imu_spi || !valid(imu_cs)) return;
+    bus_probe.result=1;
+    uint8_t original=0;
+    if(!spi_read(0x19,&original,1)) {
+        bus_probe.result=2; bus_probe.hal_status=live.imu_hal_status; return;
+    }
+    bus_probe.original=original;
+    const uint8_t patterns[]={0x55,0xAA,0xFF,0x00};
+    bool transfers_ok=true;
+    for(unsigned i=0;i<4;++i) {
+        bus_probe.patterns[i]=patterns[i];
+        uint8_t value=0;
+        if(!spi_write(0x19,patterns[i]) || !spi_read(0x19,&value,1)) {
+            bus_probe.hal_status=live.imu_hal_status; transfers_ok=false; break;
+        }
+        bus_probe.readback[i]=value;
+        if(value==patterns[i]) ++bus_probe.matches;
+    }
+    // Kể cả khi một mẫu lỗi, vẫn thử khôi phục; không bỏ qua readback restore.
+    uint8_t restored=0;
+    bus_probe.restore_ok=spi_write(0x19,original) && spi_read(0x19,&restored,1) && restored==original;
+    bus_probe.restored=restored;
+    if(!bus_probe.restore_ok) { bus_probe.result=4; bus_probe.hal_status=live.imu_hal_status; return; }
+    if(!transfers_ok) { bus_probe.result=2; return; }
+    // Tách lỗi vị trí byte/dummy khỏi lỗi nhận dạng. CS có 1 ms setup/hold
+    // trong phép đo bench này, dài hơn yêu cầu tối thiểu của chip.
+    for(unsigned row=0;row<3;++row) {
+        uint8_t tx[7]{},rx[7]{};
+        tx[0]=0xF5; if(row==1) tx[1]=0xFF;
+        const uint16_t size=row==2 ? 7 : 2;
+        pin(imu_cs,false); HAL_Delay(1);
+        const HAL_StatusTypeDef status=HAL_SPI_TransmitReceive(imu_spi,tx,rx,size,kIoTimeoutMs);
+        HAL_Delay(1); pin(imu_cs,true); HAL_Delay(1);
+        bus_probe.packet_size[row]=uint8_t(size); bus_probe.packet_status[row]=uint8_t(status);
+        for(unsigned i=0;i<7;++i) { bus_probe.tx[row][i]=tx[i]; bus_probe.rx[row][i]=rx[i]; }
+        if(status!=HAL_OK) { bus_probe.hal_status=uint32_t(status); bus_probe.result=2; return; }
+    }
+    bus_probe.whoami=bus_probe.rx[0][1];
+    if(bus_probe.matches!=4) bus_probe.result=3;
+    else bus_probe.result=bus_probe.whoami==0x12 ? 6 : 5;
+    // result6 chỉ chứng minh roundtrip và một ID, không cấu hình/khởi động gyro.
+}
 static void read_only_identity() {
     stop_everything(); live.imu_ready=0;
     volatile uint8_t* bytes=reinterpret_cast<volatile uint8_t*>(&readonly_probe);
@@ -584,6 +631,7 @@ extern "C" uint8_t HardwareTests_TestEncoders() { return bench::start_sensors(fa
 extern "C" uint8_t HardwareTests_TestGyro() { return bench::start_sensors(false,false,true,false); }
 extern "C" uint8_t HardwareTests_ProbeGyroSpi() { return bench::probe_gyro_spi(); }
 extern "C" void HardwareTests_ReadOnlyGyroProbe() { bench::read_only_identity(); }
+extern "C" void HardwareTests_ProbeGyroBus() { bench::probe_spi_roundtrip(); }
 extern "C" uint8_t HardwareTests_TestAllSensors() { return bench::start_sensors(true,true,true,false); }
 extern "C" uint8_t HardwareTests_CalibrateGyro() { return bench::start_sensors(false,false,true,true); }
 extern "C" uint8_t HardwareTests_TestMotorLeft(int direction) { return bench::start_motor(0,direction); }

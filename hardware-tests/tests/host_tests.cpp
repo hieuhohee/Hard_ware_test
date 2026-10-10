@@ -14,6 +14,7 @@ static uint32_t tick, adc_channel;
 static bool adc_failure, spi_failure;
 static bool unstable_identity, bad_config_readback;
 static bool require_slow_mode3, fail_spi_init;
+static bool bad_divider_readback;
 static unsigned identity_reads, gyro_config_writes;
 static unsigned spi_write_calls;
 static unsigned uart_receive_calls;
@@ -54,6 +55,7 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef* spi,uint8_t* tx,uin
                 spi->Init.BaudRatePrescaler!=SPI_BAUDRATEPRESCALER_256)) rx[1]=0x2E;
     }
     if (reg==0x1B && bad_config_readback) rx[1]=0;
+    if (reg==0x19 && bad_divider_readback && registers[0x19]==0xAA) rx[1]=0xA8;
     if (reg==0x3A && !(registers[0x38]&1)) rx[1]=0; // Data ready chưa được enable.
     return HAL_OK;
 }
@@ -177,6 +179,18 @@ int main() {
     CHECK(readonly_probe.io_errors==0 && cs_port.state==1);
     spi_failure=true; HardwareTests_ReadOnlyGyroProbe(); spi_failure=false;
     CHECK(readonly_probe.matches==0 && readonly_probe.io_errors==44 && !live.imu_ready);
+    registers[0x19]=7; registers[0x75]=0x12;
+    HardwareTests_ProbeGyroBus();
+    CHECK(bus_probe.result==6 && bus_probe.matches==4 && bus_probe.restore_ok);
+    CHECK(registers[0x19]==7 && bus_probe.original==7 && bus_probe.restored==7);
+    CHECK(bus_probe.tx[1][1]==0xFF && bus_probe.packet_size[2]==7);
+    CHECK(bus_probe.rx[2][1]==0x12 && !live.imu_ready && !live.motor_active);
+    registers[0x75]=0x2E; HardwareTests_ProbeGyroBus();
+    CHECK(bus_probe.result==5 && bus_probe.matches==4 && !live.imu_ready);
+    bad_divider_readback=true; HardwareTests_ProbeGyroBus(); bad_divider_readback=false;
+    CHECK(bus_probe.result==3 && bus_probe.matches==3 && bus_probe.restore_ok && registers[0x19]==7);
+    spi_failure=true; HardwareTests_ProbeGyroBus(); spi_failure=false;
+    CHECK(bus_probe.result==2 && !live.imu_ready);
 
     // API gọi trực tiếp: có UART để log nhưng Update tuyệt đối không nhận lệnh.
     registers[0x75]=0x12; registers[0x3A]=1;

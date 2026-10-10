@@ -36,7 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GYRO_IDENTITY_ONLY 1 /* 1: chỉ đọc ID; 0: test gyro với init đầy đủ. */
+#define GYRO_IDENTITY_ONLY 2 /* 0: gyro đầy đủ; 1: chỉ đọc ID; 2: đọc ID + roundtrip SPI. */
 
 /* USER CODE END PD */
 
@@ -101,6 +101,9 @@ int main(void)
   /* USER CODE BEGIN 2 */
 #if GYRO_IDENTITY_ONLY
   HardwareTests_ReadOnlyGyroProbe(); /* Không gọi Begin trước bài chỉ đọc. */
+#if GYRO_IDENTITY_ONLY == 2
+  HardwareTests_ProbeGyroBus(); /* Ghi divider tạm thời rồi khôi phục, không bật gyro. */
+#endif
 #else
   HardwareTests_Begin();
   test_started = HardwareTests_TestGyro();

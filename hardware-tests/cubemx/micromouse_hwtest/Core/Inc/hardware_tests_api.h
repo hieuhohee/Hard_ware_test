@@ -34,6 +34,10 @@ uint8_t HardwareTests_ProbeGyroSpi(void);
 // thanh ghi ICM nào, không reset sensor, không đổi SPI mode/pin.
 // Không bắt đầu test gyro/motor; kết quả ở bench::readonly_probe.
 void HardwareTests_ReadOnlyGyroProbe(void);
+// Bench chẩn đoán một lần: dừng các bài, thử ghi/đọc divider 0x19 với
+// 55/AA/FF/00 và khôi phục giá trị cũ, so sánh WHO đọc ngắn/dummy FF/burst.
+// Không reset sensor, không nhận ID sai là gyro ready, không chạy motor.
+void HardwareTests_ProbeGyroBus(void);
 uint8_t HardwareTests_TestAllSensors(void);
 
 // Giữ gyro yên: lấy 1000 mẫu mới, timeout 5 s. Sau hiệu chuẩn vẫn đọc gyro.

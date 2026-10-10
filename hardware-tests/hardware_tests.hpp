@@ -52,6 +52,16 @@ struct IdentityReadOnly {
     uint8_t registers[12], values[12];
 };
 extern volatile IdentityReadOnly readonly_probe;
+// Kết quả chẩn đoán đường SPI, độc lập với imu_ready của driver gyro.
+// result: 0 chưa chạy/thiếu config, 1 đang chạy, 2 HAL lỗi, 3 sai readback,
+// 4 không khôi phục được divider, 5 roundtrip đạt nhưng ID sai, 6 ID cũng đúng.
+struct SpiRoundTrip {
+    uint32_t result, matches, hal_status, restore_ok;
+    uint8_t original, restored, whoami, patterns[4], readback[4];
+    uint8_t packet_size[3], packet_status[3];
+    uint8_t tx[3][7], rx[3][7]; // Hai dummy khác nhau và một gói burst dài.
+};
+extern volatile SpiRoundTrip bus_probe;
 // Ghi mã ASCII vào command trong debugger: '1'=49, 'i'=105, 's'=115...
 // Không tự chạy motor sau khởi động. Init/ poll chỉ gọi từ luồng main.
 extern volatile uint8_t command;
