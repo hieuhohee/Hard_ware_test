@@ -4,9 +4,15 @@ Kết quả test thực mới: [ANGLES_HARDWARE_CHECK.md](ANGLES_HARDWARE_CHECK.
 Đã đọc được góc và hiệu chuẩn, nhưng lần quay về mốc có mất đoạn mẫu,
 `tracking_continuous=0`; chưa xác nhận góc đủ chính xác cho PID quay90°.
 
+Bản source mới: [GYRO_TIMING_UPDATE.md](GYRO_TIMING_UPDATE.md), poll1ms,
+dt bằng DWT, hiệu chuẩn2000mẫu và nhật ký raw bất thường. Đã build/host test;
+chưa xác minh bản này trên bo vì ST-Link lỗi kết nối USB. Số liệu400mẫu/
+125Hz cuối tài liệu thuộc phiên bản trước. Khi F5 nạp ELF mới, chờ đúng
+`calibration_target` và ready thay vì mặc định400mẫu.
+
 Bài test gyro C mode5 đã có tính góc. Giữ nguyên SPI2 PB13/PB14/PB15,
 CS PB12 và cấu hình chân cũ. Chỉ gyro XYZ được bật, accel vẫn standby.
-Main tự gọi hiệu chuẩn400 mẫu sau khởi tạo; trong while vẫn chỉ gọi
+Main tự gọi hiệu chuẩn2000 mẫu sau khởi tạo; trong while vẫn chỉ gọi
 `IcmC_GyroPollUnverified()`, hàm này cập nhật cả dữ liệu gyro và góc.
 
 ## Các bước thực hiện trong VS Code
@@ -19,7 +25,7 @@ Main tự gọi hiệu chuẩn400 mẫu sau khởi tạo; trong while vẫn ch�
 3. Mở Run and Debug bằng Ctrl+Shift+D. Mở **STM32Cube Live Watch** và dùng
    nút thêm biểu thức/dấu+ trong panel. Watch thông thường chỉ cập nhật khi
    pause; không dùng nó để quan sát liên tục lúc đang xoay.
-4. Thêm từng biểu thức dưới đây. Chờ khoảng4giây và kiểm tra `ready=1`,
+4. Thêm từng biểu thức dưới đây. Giữ yên tới khi đủ2000mẫu và `ready=1`,
    `calibration_state=3`. Thời gian tính từ lúc firmware chạy qua Begin,
    không tính thời gian đang dừng ở breakpoint.
 
@@ -27,6 +33,7 @@ Main tự gọi hiệu chuẩn400 mẫu sau khởi tạo; trong while vẫn ch�
    icm_c_angles.ready
    icm_c_angles.calibration_state
    icm_c_angles.calibration_samples
+   icm_c_angles.calibration_target
    icm_c_angles.roll_deg
    icm_c_angles.pitch_deg
    icm_c_angles.yaw_deg
@@ -69,9 +76,10 @@ Ví dụ90°/s trong1giây cho90°. Với chuyển động3D tổng quát, gyro 
 quay theo hệ trục module, không trực tiếp đo đạo hàm ba góc Euler; vì vậy
 source dùng quaternion và phép nhân `q_new = q_old * dq`.
 
-`dt` lấy từ HAL tick giữa hai mẫu fresh. Không mặc định1ms theo ODR yêu cầu
-1kHz vì MCU bench thực tế chỉ đọc khoảng125Hz. Các mẫu trung gian bị bỏ
-qua do chưa dùng FIFO; quay rất nhanh/đổi hướng nhanh vẫn có thể sai góc.
+`dt` của bản mới lấy từ DWT giữa hai lần đọc burst, có độ phân giải cao hơn
+HAL tick1ms. Poll yêu cầu1ms nhưng chưa đo tốc độ thật của bản mới trên bo.
+Không mặc định1ms theo ODR yêu cầu1kHz. Bản trước thu khoảng125Hz. Chưa
+dùng FIFO nên có thể bỏ mẫu khi MCU bận; quay nhanh vẫn cần kiểm chứng.
 Không tích phân mẫu đọc cưỡng bức, frame bão hòa chính xác32767/-32768,
 hoặc qua gap tick lớn hơn50ms. Khi thiếu đoạn dữ liệu, góc cũ còn được giữ
 nhưng `tracking_continuous=0` tới khi đặt mốc lại. Counter `gap_count` và
@@ -94,7 +102,7 @@ Bỏ kiểm tra ID không xác nhận được sai số scale hoặc loại chip
 |---|---|
 | 0 | Chưa gọi hiệu chuẩn; kiểm tra đang nạp đúng mode5 và ELF mới |
 | 1 | Đợi500ms cho mẫu ổn định; để chương trình chạy |
-| 2 | Đang thu400 mẫu fresh; giữ module yên tới khi đủ |
+| 2 | Đang thu mẫu fresh tới calibration_target (main mới2000); giữ yên |
 | 3 | Hiệu chuẩn đạt; ready phải1 và updates tăng khi có mẫu |
 | 4 | Hiệu chuẩn không đạt; xem readback, io_errors và noise_std_dps |
 
@@ -102,7 +110,7 @@ Nếu state2 và số mẫu đứng yên, kiểm tra MCU có đang pause, `sampl
 tăng hay không. Nếu state4, **không sửa ready thành1 trong debugger**.
 Để module yên rồi reset firmware để thử lại, hoặc gọi lại hàm hiệu chuẩn
 từ chương trình. Hai ngưỡng bench ở source là `ANGLE_MAX_BIAS_DPS=10`
-và `ANGLE_MAX_NOISE_DPS=1.5`. Noise là độ lệch chuẩn trong cửa sổ400mẫu;
+và `ANGLE_MAX_NOISE_DPS=1.5`. Noise là độ lệch chuẩn trong cửa sổ hiệu chuẩn;
 nếu cao, kiểm tra rung/chuyển động/outlier trước khi nới ngưỡng.
 
 Gyro-only không thể phân biệt hoàn toàn bias với quay đều rất chậm; một
@@ -114,7 +122,7 @@ cửa sổ có nhiễu thấp chưa tự chứng minh module đứng yên. Ngư�
 Hiệu chuẩn lại khi module đứng yên (gọi **một lần**, không gọi mỗi vòng):
 
 ```c
-IcmC_AnglesStartCalibration(400);
+IcmC_AnglesStartCalibration(2000);
 ```
 
 Đặt tư thế hiện tại làm mốc0, giữ bias cũ (gọi một lần khi ready1):
@@ -132,7 +140,7 @@ pause; HAL tick cũng thường không đếm thời gian thực khi MCU bị ha
 Không dựa riêng vào gap_count để phát hiện mọi lần pause. Cho chạy lại
 rồi đặt mốc/khởi động lại để thực hiện một bài đo liên tục mới.
 
-## Kiểm thử
+## Kiểm thử bản trước (400mẫu, khoảng125Hz)
 
 Mốc trước đợt thêm góc: `bdd6426`. Host test dùng đúng source C firmware,
 kiểm tra bias đứng yên, cửa sổ có chuyển động bị từ chối, yaw90° trong1s,

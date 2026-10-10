@@ -6,11 +6,43 @@ volatile IcmC_Diagnostics icm_c;
 volatile IcmC_ConfigDiagnostics icm_c_config;
 volatile IcmC_GyroDiagnostics icm_c_gyro;
 volatile IcmC_AngleDiagnostics icm_c_angles;
+volatile IcmC_QualityDiagnostics icm_c_quality;
 static uint32_t last_poll;
 static uint32_t angle_calibration_start, angle_previous_ms, angle_previous_valid;
+static uint32_t angle_previous_clock, gyro_previous_clock, no_data_latched;
 static float angle_mean[3], angle_m2[3], angle_previous_rate[3];
-static void angles_frame(uint32_t now, uint32_t fresh, int saturated);
+static void angles_frame(uint32_t now, uint32_t fresh, int saturated, uint32_t sample_clock);
 static void angles_gap(void);
+
+/* F405 Cortex-M4 có DWT CYCCNT. Dùng chênh lệch unsigned32 để xử lý wrap
+   (~25.6s ở168MHz), không đổi timer/chân/clock CubeMX. dt tối đa50ms nên
+   bình thường ngắn hơn một vòng counter. Khi debugger halt, counter có
+   thể dừng: không khôi phục được chuyển động diễn ra trong lúc pause. */
+static uint32_t gyro_clock_now(void) {
+#if defined(__arm__) || defined(__thumb__)
+    return DWT->CYCCNT;
+#else
+    return HAL_GetTick() * 1000u; /* Host fake clock: ticks microsecond. */
+#endif
+}
+static void gyro_cs_guard(void) {
+#if defined(__arm__) || defined(__thumb__)
+    uint32_t start = gyro_clock_now();
+    uint32_t cycles = icm_c_quality.clock_hz / 500000u; /* 2us setup/hold. */
+    while ((uint32_t)(gyro_clock_now() - start) < cycles) { __NOP(); }
+#endif
+}
+static void quality_event(uint32_t now, uint32_t reason) {
+    unsigned row = icm_c_quality.history_next;
+    icm_c_quality.events[row][0] = (int32_t)now;
+    icm_c_quality.events[row][1] = (int32_t)reason;
+    icm_c_quality.events[row][2] = (int32_t)icm_c_gyro.last_status;
+    for (unsigned i = 0; i < 3; ++i) icm_c_quality.events[row][i + 3] = icm_c_gyro.raw[i];
+    icm_c_quality.events[row][6] = (int32_t)icm_c_quality.last_dt_us;
+    icm_c_quality.events[row][7] = (int32_t)icm_c_gyro.samples;
+    ++icm_c_quality.events_written;
+    icm_c_quality.history_next = (row + 1) % 64;
+}
 
 /* Chính xác hai byte: địa chỉ | bit READ, rồi dummy để tạo 8 clock dữ liệu.
    ID là RX[1]; RX[0] chưa phải dữ liệu của register. Đây là triển khai C
@@ -168,9 +200,9 @@ void IcmC_ConfigAudit(void) {
 static int gyro_write(uint8_t reg, uint8_t value) {
     uint8_t tx[2] = {reg, value};
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-    HAL_Delay(1);
+    gyro_cs_guard();
     HAL_StatusTypeDef status = HAL_SPI_Transmit(&hspi2, tx, 2, 20);
-    HAL_Delay(1);
+    gyro_cs_guard();
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
     icm_c_gyro.hal_status = (uint32_t)status;
     if (status != HAL_OK) { ++icm_c_gyro.io_errors; return 0; }
@@ -184,10 +216,10 @@ static int gyro_read(uint8_t reg, uint8_t *out, unsigned count) {
     if (!count || count > 6) return 0;
     tx[0] = (uint8_t)(reg | 0x80u);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-    HAL_Delay(1);
+    gyro_cs_guard();
     HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(&hspi2, tx, rx,
                                                      (uint16_t)(count + 1), 20);
-    HAL_Delay(1);
+    gyro_cs_guard();
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
     icm_c_gyro.hal_status = (uint32_t)status;
     if (status != HAL_OK) { ++icm_c_gyro.io_errors; return 0; }
@@ -201,6 +233,16 @@ uint32_t IcmC_GyroBeginUnverified(void) {
     /* Re-init gyro làm hiệu chuẩn/góc cũ không còn hợp lệ. */
     bytes = (volatile unsigned char *)&icm_c_angles;
     for (unsigned i = 0; i < sizeof(icm_c_angles); ++i) bytes[i] = 0;
+    bytes = (volatile unsigned char *)&icm_c_quality;
+    for (unsigned i = 0; i < sizeof(icm_c_quality); ++i) bytes[i] = 0;
+#if defined(__arm__) || defined(__thumb__)
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    icm_c_quality.clock_hz = SystemCoreClock;
+#else
+    icm_c_quality.clock_hz = 1000000u;
+#endif
+    gyro_previous_clock = gyro_clock_now(); no_data_latched = 0;
     angle_previous_valid = 0;
     icm_c_gyro.bypass_requested = 1;
     icm_c_gyro.id_unverified = 1; /* Chỉ bỏ cờ này khi đọc thật được đúng ID12. */
@@ -253,21 +295,42 @@ void IcmC_GyroPollUnverified(void) {
     uint32_t now = HAL_GetTick();
     if (!icm_c_gyro.done) return;
     uint32_t gap = (uint32_t)(now - icm_c_gyro.last_poll_ms);
-    if (gap < 5) return;
+    if (gap < 1) return; /* Thu nhanh hơn bài ID; không HAL_Delay trong while. */
     if (gap > icm_c_gyro.max_poll_gap_ms) icm_c_gyro.max_poll_gap_ms = gap;
     icm_c_gyro.last_poll_ms = now;
     ++icm_c_gyro.polls;
     uint8_t status = 0;
-    if (!gyro_read(0x3A, &status, 1)) { angles_gap(); return; }
+    if (!gyro_read(0x3A, &status, 1)) {
+        ++icm_c_quality.read_failures; quality_event(now, 16); angles_gap(); return;
+    }
     icm_c_gyro.last_status = status;
+    uint32_t reason = 0;
+    /* Với INT_ENABLE01, gyro-only thông thường status00/01; ghi thêm các
+       bit khác để phân tích, không mặc định mọi bit khác đều do đường dây. */
+    if (status & 0xFEu) { ++icm_c_quality.status_other_bits; reason |= 1; }
     uint32_t fresh = (status & 1u) != 0;
-    if (fresh) ++icm_c_gyro.data_ready;
+    if (fresh) { ++icm_c_gyro.data_ready; no_data_latched = 0; }
+    else if ((uint32_t)(now - icm_c_gyro.last_sample_ms) >= 50 && !no_data_latched) {
+        no_data_latched = 1; ++icm_c_quality.no_data_windows; reason |= 8;
+    }
     /* Đọc cưỡng bức giúp thấy raw ngay cả khi INT chưa hoạt động. Không coi
        lần đọc ấy là mẫu mới; khi không fresh chỉ đọc tối đa10 lần/giây. */
-    if (!fresh && (uint32_t)(now - icm_c_gyro.last_sample_ms) < 100) return;
+    if (!fresh && (uint32_t)(now - icm_c_gyro.last_sample_ms) < 100) {
+        if (reason) quality_event(now, reason);
+        return;
+    }
     uint8_t data[6];
-    if (!gyro_read(0x43, data, 6)) { angles_gap(); return; }
-    int changed = 0, all_zero = 1, saturated = 0;
+    if (!gyro_read(0x43, data, 6)) {
+        ++icm_c_quality.read_failures; quality_event(now, reason | 16); angles_gap(); return;
+    }
+    uint32_t sample_clock = gyro_clock_now();
+    uint32_t clock_delta = (uint32_t)(sample_clock - gyro_previous_clock);
+    /* Chỉ có ý nghĩa sau một frame trước đó; frame đầu dt được công bố0. */
+    icm_c_quality.last_dt_us = (!icm_c_gyro.samples && !icm_c_gyro.forced_reads) ? 0 :
+        (uint32_t)((uint64_t)clock_delta * 1000000u / icm_c_quality.clock_hz);
+    gyro_previous_clock = sample_clock;
+    icm_c_quality.last_sample_clock = sample_clock;
+    int changed = 0, all_zero = 1, saturated = 0, near_rail = 0, large_step = 0;
     unsigned row = icm_c_gyro.history_next;
     icm_c_gyro.history[row][0] = (int32_t)now;
     icm_c_gyro.history[row][1] = (int32_t)fresh;
@@ -276,6 +339,10 @@ void IcmC_GyroPollUnverified(void) {
         /* Chuyển two's complement rõ ràng, tránh cast unsigned->signed
            ngoài miền biểu diễn; kết quả mở rộng dấu thành int32 cho Watch. */
         int32_t raw = bits < 0x8000u ? (int32_t)bits : (int32_t)bits - 65536;
+        if (raw >= 32000 || raw <= -32000) near_rail = 1;
+        int32_t step = raw - icm_c_gyro.raw[axis];
+        if ((icm_c_gyro.samples || icm_c_gyro.forced_reads) && (step >= 8192 || step <= -8192))
+            large_step = 1; /* Flag diagnostic, không cắt/clamp raw. */
         if (raw != icm_c_gyro.raw[axis]) changed = 1;
         if (raw != 0) all_zero = 0;
         if (raw == 32767 || raw == -32768) saturated = 1;
@@ -294,7 +361,10 @@ void IcmC_GyroPollUnverified(void) {
     if (fresh) ++icm_c_gyro.samples; else ++icm_c_gyro.forced_reads;
     icm_c_gyro.last_sample_ms = now;
     icm_c_gyro.history_next = (row + 1) % 32;
-    angles_frame(now, fresh, saturated);
+    if (near_rail) { ++icm_c_quality.near_rail_frames; reason |= 2; }
+    if (large_step) { ++icm_c_quality.large_step_frames; reason |= 4; }
+    if (reason) quality_event(now, reason);
+    angles_frame(now, fresh, saturated, sample_clock);
 }
 
 /* Ngưỡng bench để tránh hiệu chuẩn khi đang cầm/xoay module. Đây không phải
@@ -345,7 +415,7 @@ static void angles_gap(void) {
     if (icm_c_angles.calibration_state == 2) icm_c_angles.calibration_state = 4;
 }
 
-static void angles_frame(uint32_t now, uint32_t fresh, int saturated) {
+static void angles_frame(uint32_t now, uint32_t fresh, int saturated, uint32_t sample_clock) {
     if (!fresh || saturated || !icm_c_gyro.configured) { angles_gap(); return; }
     uint32_t state = icm_c_angles.calibration_state;
     if (state == 1) {
@@ -385,21 +455,23 @@ static void angles_frame(uint32_t now, uint32_t fresh, int saturated) {
         icm_c_angles.corrected_dps[i] = rate[i];
     }
     if (!angle_previous_valid) {
-        angle_previous_valid = 1; angle_previous_ms = now;
+        angle_previous_valid = 1; angle_previous_ms = now; angle_previous_clock = sample_clock;
         for (unsigned i = 0; i < 3; ++i) angle_previous_rate[i] = rate[i];
         return;
     }
     uint32_t dt_ms = (uint32_t)(now - angle_previous_ms);
-    angle_previous_ms = now;
-    if (!dt_ms || dt_ms > ANGLE_MAX_GAP_MS) {
+    uint32_t dt_clock = (uint32_t)(sample_clock - angle_previous_clock);
+    angle_previous_ms = now; angle_previous_clock = sample_clock;
+    if (!dt_clock || dt_ms > ANGLE_MAX_GAP_MS ||
+        dt_clock > icm_c_quality.clock_hz / 20u) {
         ++icm_c_angles.gap_count; angles_gap(); return;
     }
-    float dt = (float)dt_ms * 0.001f;
+    float dt = (float)dt_clock / (float)icm_c_quality.clock_hz;
     icm_c_angles.last_dt_s = dt;
     float rotation[3], length2 = 0;
     for (unsigned i = 0; i < 3; ++i) {
         /* Trung bình hai rate lân cận (trapezoid), dùng dt ĐO ĐƯỢC, không
-           mặc định1ms theo ODR cảm biến khi MCU chỉ thu khoảng125Hz. */
+           không mặc định1ms theo ODR; dt lấy tại lúc đọc burst xong. */
         rotation[i] = 0.5f * (angle_previous_rate[i] + rate[i]) * ANGLE_RAD_PER_DEG * dt;
         angle_previous_rate[i] = rate[i]; length2 += rotation[i] * rotation[i];
     }

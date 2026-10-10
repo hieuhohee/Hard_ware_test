@@ -134,6 +134,32 @@ static void test_angles(void) {
     assert(icm_c_angles.calibration_state == 4 && !icm_c_angles.ready);
     assert(IcmC_AnglesResetReference() == 0);
 }
+static void test_quality_log(void) {
+    reset_fixture(0x2E);
+    assert(IcmC_GyroBeginUnverified() == 1);
+    assert(icm_c_quality.clock_hz == 1000000);
+    supply_sample(0, 0, 0, 1);
+    supply_sample(32639, -1, 9, 1);
+    assert(icm_c_quality.near_rail_frames == 1 && icm_c_quality.large_step_frames == 1);
+    assert(icm_c_quality.events_written == 1 && icm_c_quality.events[0][1] == 6);
+    assert(icm_c_quality.events[0][3] == 32639 && icm_c_gyro.raw[0] == 32639);
+    assert(icm_c_quality.last_dt_us == 10000); /* Không dùng chu kỳ cố định1ms. */
+    registers[0x3A] = 0x81; tick += 10; IcmC_GyroPollUnverified();
+    assert(icm_c_quality.status_other_bits == 1 && icm_c_quality.events_written == 2);
+    registers[0x3A] = 0; tick += 60; IcmC_GyroPollUnverified();
+    assert(icm_c_quality.no_data_windows == 1 && icm_c_gyro.forced_reads == 0);
+    uint32_t events = icm_c_quality.events_written;
+    tick += 5; IcmC_GyroPollUnverified();
+    assert(icm_c_quality.events_written == events); /* Không spam cùng outage. */
+    tick += 50; IcmC_GyroPollUnverified();
+    assert(icm_c_gyro.forced_reads == 1 && icm_c_quality.no_data_windows == 1);
+    timeout_next = 1; tick += 1; IcmC_GyroPollUnverified();
+    assert(icm_c_quality.read_failures == 1 && cs == GPIO_PIN_SET);
+    for (unsigned i = 0; i < 70; ++i) supply_sample(32639, -1, 9, 1);
+    assert(icm_c_quality.history_next == icm_c_quality.events_written % 64);
+    unsigned last = (icm_c_quality.history_next + 63) % 64;
+    assert(icm_c_quality.events[last][3] == 32639); /* Journal wrap vẫn đúng. */
+}
 int main(void) {
     reset_fixture(0x2E);
     assert(IcmC_GyroBeginUnverified() == 1);
@@ -167,6 +193,7 @@ int main(void) {
     assert(IcmC_GyroBeginUnverified() == 1 && icm_c_gyro.id_unverified == 0);
     assert(icm_c_gyro.actual_id == 0x12 && id_writes == 0);
     test_angles();
-    puts("PASS: gyro diagnostics, bias, quaternion/Euler, timestamp, gaps, reference");
+    test_quality_log();
+    puts("PASS: gyro diagnostics, bias, quaternion/Euler, timestamp, gaps, quality log");
     return 0;
 }

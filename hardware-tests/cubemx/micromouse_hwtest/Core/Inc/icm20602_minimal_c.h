@@ -60,10 +60,23 @@ extern volatile IcmC_GyroDiagnostics icm_c_gyro;
 /* Gọi một lần, sau GPIO/SPI2. Reset và cấu hình gyro XYZ, accel standby.
    Trả về kết quả readback cấu hình, KHÔNG phải xác nhận đúng loại chip. */
 uint32_t IcmC_GyroBeginUnverified(void);
-/* Gọi liên tục trong while; poll tối thiểu 5ms (~200Hz bench), gyro được
-   yêu cầu ODR1kHz. Không FIFO: không cam kết thu đủ từng mẫu ở ODR1kHz.
+/* Gọi liên tục trong while; poll tối thiểu1ms, bỏ delay1ms quanh giao dịch.
+   Gyro được yêu cầu ODR1kHz. Không FIFO: không cam kết thu đủ từng mẫu.
    Nếu chưa Data Ready, mỗi100ms vẫn đọc raw nhưng không tăng samples. */
 void IcmC_GyroPollUnverified(void);
+
+/* Nhật ký chẩn đoán, KHÔNG phải bộ lọc làm mượt/che frame sai. Các cờ lớn
+   hoặc step chỉ báo đáng xem lại; dữ liệu raw vẫn giữ nguyên. Journal64
+   frame gần nhất có dấu hiệu, không ghi mọi mẫu hoặc bảo đảm bắt mọi lỗi.
+   reason bit0: status bất thường; bit1: raw gần biên; bit2: step lớn;
+   bit3: thiếu Data Ready >=50ms; bit4: lỗi HAL đọc dữ liệu. */
+typedef struct {
+    uint32_t clock_hz, last_sample_clock, last_dt_us;
+    uint32_t status_other_bits, near_rail_frames, large_step_frames;
+    uint32_t no_data_windows, read_failures, events_written, history_next;
+    int32_t events[64][8]; /* ms, reason, status, rawXYZ, dt_us, samples. */
+} IcmC_QualityDiagnostics;
+extern volatile IcmC_QualityDiagnostics icm_c_quality;
 
 /* Góc tương đối từ gyro-only: không đo trọng lực, không có hướng Bắc.
    q biểu diễn phép quay từ trục module hiện tại về hệ trục tại lúc zero.
@@ -79,7 +92,7 @@ typedef struct {
 } IcmC_AngleDiagnostics;
 extern volatile IcmC_AngleDiagnostics icm_c_angles;
 /* Gọi sau GyroBegin, module ĐỨNG YÊN. Đợi500ms rồi thu sample_count fresh
-   (tối thiểu32); main chọn400, khoảng4giây trên bench125Hz. Không UART.
+   (tối thiểu32); main chọn2000. Xem ready, không chỉ đếm thời gian chờ.
    Chỉ ready khi readback đạt và cửa sổ bias/nhiễu đạt ngưỡng bench.
    Gyro-only không phân biệt bias với quay đều rất chậm: vẫn phải giữ yên. */
 uint32_t IcmC_AnglesStartCalibration(uint32_t sample_count);
