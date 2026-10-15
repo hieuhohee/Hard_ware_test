@@ -13,8 +13,8 @@ Tên PA0/PB4 là GPIO của MCU, không phải số thứ tự chân connector. 
 |---|---|---|---|
 | Motor trái IN1 / IN2 | PB4 / PB5 | TIM3 CH1 / CH2, AF2, PWM1 active HIGH | 20 kHz; PSC=0, ARR=4199; pulse ban đầu 0 |
 | Motor phải IN1 / IN2 | PB6 / PB7 | TIM4 CH1 / CH2, AF2, PWM1 active HIGH | 20 kHz; PSC=0, ARR=4199; pulse ban đầu 0 |
-| Encoder trái A / B | PC6 / PC7 | TIM8 CH1 / CH2, AF3, Encoder TI12 | Đếm x4; PSC=0, ARR=65535 |
-| Encoder phải A / B | PA0 / PA1 | TIM5 CH1 / CH2, AF2, Encoder TI12 | Đếm x4; PSC=0, ARR=4294967295 |
+| Encoder trái A / B | PC6 / PC7 | TIM8 CH1 / CH2, AF3, Encoder TI12 | Đếm ; PSC=0, ARR=65535 |
+| Encoder phải A / B | PA0 / PA1 | TIM5 CH1 / CH2, AF2, Encoder TI12 | Đếm ; PSC=0, ARR=4294967295 |
 | ICM20602 CS | PB12 | GPIO output push-pull | Mặc định HIGH, driver kéo LOW khi giao dịch |
 | ICM20602 SCK / MISO / MOSI | PB13 / PB14 / PB15 | SPI2 AF5, master, full duplex, mode 0, 8 bit, MSB first, NSS software | PCLK1/64 = 656.25 kHz |
 | ICM20602 INT | PB8 | GPIO input, no-pull | Dự phòng, không EXTI; driver đọc INT_STATUS qua SPI |

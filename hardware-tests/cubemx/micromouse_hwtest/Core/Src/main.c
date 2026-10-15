@@ -37,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GYRO_IDENTITY_ONLY 5 /* 0: gyro C++; 1/2: probe C++; 3: ID C; 4: rà cấu hình C;
+#define GYRO_IDENTITY_ONLY 0/* 0: gyro C++; 1/2: probe C++; 3: ID C; 4: rà cấu hình C;
                               5: thử gyro C dù ID sai, xem icm_c_gyro. */
 
 /* USER CODE END PD */
@@ -85,7 +85,7 @@ int main(void)
   /* USER CODE END Init */
 
   /* Configure the system clock */
-  SystemClock_Config();
+  SystemClock_Config(); 
 
   /* USER CODE BEGIN SysInit */
 
@@ -123,13 +123,13 @@ int main(void)
 #endif
 #else
   HardwareTests_Begin();
-  test_started = HardwareTests_TestGyro();
+  test_started = HardwareTests_TestIR();
   /* Chỉ khi init thường thất bại: dò mode/tốc độ một lần, giữ nguyên pin.
      Hàm dò không báo thành công chỉ vì HAL_OK: phải đúng ID và readback. */
-  if (!test_started && HardwareTests_ProbeGyroSpi())
-  {
-    test_started = HardwareTests_TestGyro();
-  }
+  // if (!test_started && HardwareTests_ProbeGyroSpi())
+  // {
+  //   test_started = HardwareTests_TestGyro();
+  // }
 #endif
   /* USER CODE END 2 */
 
