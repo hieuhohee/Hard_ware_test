@@ -57,8 +57,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define IR_5_Pin GPIO_PIN_0
-#define IR_5_GPIO_Port GPIOC
 #define IR_side_Pin GPIO_PIN_1
 #define IR_side_GPIO_Port GPIOC
 #define IR_front_Pin GPIO_PIN_2
@@ -79,14 +77,18 @@ void Error_Handler(void);
 #define IR_4_GPIO_Port GPIOB
 #define IMU_CS_Pin GPIO_PIN_12
 #define IMU_CS_GPIO_Port GPIOB
+#define ENC_RZ_Pin GPIO_PIN_2
+#define ENC_RZ_GPIO_Port GPIOA
 #define ENC_LA_Pin GPIO_PIN_6
 #define ENC_LA_GPIO_Port GPIOC
 #define ENC_LB_Pin GPIO_PIN_7
 #define ENC_LB_GPIO_Port GPIOC
-#define BTN_Mode_Pin GPIO_PIN_8
-#define BTN_Mode_GPIO_Port GPIOC
-#define BTN_Start_Pin GPIO_PIN_9
-#define BTN_Start_GPIO_Port GPIOC
+#define ENC_LZ_Pin GPIO_PIN_4
+#define ENC_LZ_GPIO_Port GPIOC
+#define BTN_Mode_Pin GPIO_PIN_12
+#define BTN_Mode_GPIO_Port GPIOA
+#define BTN_Start_Pin GPIO_PIN_11
+#define BTN_Start_GPIO_Port GPIOA
 #define PWM_L1_Pin GPIO_PIN_4
 #define PWM_L1_GPIO_Port GPIOB
 #define PWM_L2_Pin GPIO_PIN_5

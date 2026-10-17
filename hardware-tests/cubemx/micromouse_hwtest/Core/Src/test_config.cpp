@@ -12,8 +12,8 @@
 // Mặc định không sử dụng phần cứng ngoài nào, không tự quay motor.
 #define BENCH_USE_UART       0 // 1: USART3 PC10/PC11; 0: xem bench::live bằng ST-Link.
 #define BENCH_TEST_IR        1 // Quét thô 5 đầu vào ADC IR của cấu hình micromousev2 (1).
-#define BENCH_TEST_ENCODER_L 0 // MT6701 A/B: PC6/PC7, TIM8.
-#define BENCH_TEST_ENCODER_R 0 //MT6701 A/B: PA0/PA1, TIM5.
+#define BENCH_TEST_ENCODER_L 0 // MT6701 A/B: PC6/PC7, TIM8 (module test map).
+#define BENCH_TEST_ENCODER_R 0 // MT6701 A/B: PA0/PA1, TIM5 (module test map).
 #define BENCH_TEST_MOTOR_L   0 // AT8870 IN1/IN2: PB4/PB5, TIM3 CH1/CH2.
 #define BENCH_TEST_MOTOR_R   0 // AT8870 IN1/IN2: PB6/PB7, TIM4 CH1/CH2.
 #define BENCH_TEST_GYRO      0// Chỉ ICM20602 SPI2, không tự nhận MPU6050/MPU6500.
