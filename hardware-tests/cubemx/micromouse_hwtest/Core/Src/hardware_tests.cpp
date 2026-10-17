@@ -726,7 +726,9 @@ static void poll_impl(bool accept_commands) {
         (long long)live.encoder_total[0],(long long)live.encoder_total[1]);
     if (monitor_ir) for (unsigned i=0;i<kIrCount;++i)
         if (live.ir_ready_mask&(1u<<i)) {
-            if (i==0 || i==1) log("IR-%c off=%u on=%u diff=%ld\r\n",i==0?'L':'R',
+            if (i==2) log("IR_diag (PA5/ADC1_IN5) raw=%u diff=%ld\r\n",
+                unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
+            else if (i==0 || i==1) log("IR-%c off=%u on=%u diff=%ld\r\n",i==0?'L':'R',
                 unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
             else log("IR%u off=%u on=%u diff=%ld\r\n",i,
                 unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);

@@ -11,7 +11,7 @@
 // =========== CHỌN MODULE ĐANG ĐẤU DÂY: 1 = dùng, 0 = bỏ qua ===========
 // Mặc định không sử dụng phần cứng ngoài nào, không tự quay motor.
 #define BENCH_USE_UART       0 // 1: USART3 PC10/PC11; 0: xem bench::live bằng ST-Link.
-#define BENCH_TEST_IR        1 // Quét thô 5 đầu vào ADC IR của cấu hình micromousev2 (1).
+#define BENCH_TEST_IR        1 // Chỉ test IR_diag: PA5 / ADC1_IN5 (ir[2]).
 #define BENCH_TEST_ENCODER_L 0 // MT6701 A/B: PC6/PC7, TIM8 (module test map).
 #define BENCH_TEST_ENCODER_R 0 // MT6701 A/B: PA0/PA1, TIM5 (module test map).
 #define BENCH_TEST_MOTOR_L   0 // AT8870 IN1/IN2: PB4/PB5, TIM3 CH1/CH2.
@@ -70,11 +70,11 @@ Encoder encoders[2]={
 
 Ir ir[5]={
 #if BENCH_TEST_IR
-    {{nullptr,0},ADC_CHANNEL_3,+1}, // IR_1: PA3 / ADC1_IN3.
-    {{nullptr,0},ADC_CHANNEL_4,+1}, // IR_2: PA4 / ADC1_IN4.
+    {{nullptr,0},kUnusedAdc,+1}, // IR_1 tạm bỏ qua.
+    {{nullptr,0},kUnusedAdc,+1}, // IR_2 tạm bỏ qua.
     {{nullptr,0},ADC_CHANNEL_5,+1}, // IR_diag: PA5 / ADC1_IN5.
-    {{nullptr,0},ADC_CHANNEL_8,+1}, // IR_3: PB0 / ADC1_IN8.
-    {{nullptr,0},ADC_CHANNEL_9,+1}, // IR_4: PB1 / ADC1_IN9.
+    {{nullptr,0},kUnusedAdc,+1}, // IR_3 tạm bỏ qua.
+    {{nullptr,0},kUnusedAdc,+1}  // IR_4 tạm bỏ qua.
 #else
     {{nullptr,0},kUnusedAdc,+1},
     {{nullptr,0},kUnusedAdc,+1},
