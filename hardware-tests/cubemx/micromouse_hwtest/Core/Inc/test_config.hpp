@@ -23,6 +23,7 @@ extern Ir ir[5];
 constexpr unsigned kIrCount = 5;
 constexpr uint32_t kUnusedAdc = 0xFFFFFFFFu;
 constexpr uint32_t kIrSettleUs = 80; // Điểm bắt đầu; đo oscilloscope rồi chỉnh.
+constexpr uint32_t kIrScanIntervalMs = 500; // Quét chậm 2 Hz để dễ theo dõi trong Watch.
 constexpr uint32_t kMotorPulseMs = 300;
 constexpr unsigned kMotorDutyPercent = 12; // N20 có thể chưa thắng ma sát ở mức này.
 constexpr uint32_t kReportMs = 200; // Log 5 Hz để dễ đọc trên terminal.

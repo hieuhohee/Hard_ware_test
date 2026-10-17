@@ -116,6 +116,22 @@ static void ir_update() {
         if (ir_last_scan && uint32_t(HAL_GetTick()-ir_last_scan)<kIrScanIntervalMs) return;
         // Tìm kênh đã cấu hình. Mỗi pha được tiếp tục ở lần poll tiếp theo.
         while (!(live.ir_ready_mask & (1u << ir_index))) ir_index = (ir_index+1)%kIrCount;
+        // Cấu hình mới dùng các chân ADC IR như đầu vào thụ động, không định
+        // nghĩa chân điều khiển emitter. Khi emitter rỗng, lưu mẫu thô vào on
+        // và difference (off=0) rồi chuyển sang kênh kế tiếp.
+        if (!valid(ir[ir_index].emitter)) {
+            uint16_t value;
+            if (!adc_read(ir_index, value)) { monitor_ir=false; return; }
+            live.ir_off[ir_index] = 0;
+            live.ir_on[ir_index] = value;
+            live.ir_difference[ir_index] = ir[ir_index].signal_sign * int32_t(value);
+            unsigned next = (ir_index+1)%kIrCount;
+            while (!(live.ir_ready_mask & (1u<<next))) next = (next+1)%kIrCount;
+            if (next <= ir_index) ++live.ir_frames;
+            ir_index = next;
+            ir_last_scan = HAL_GetTick();
+            return;
+        }
         all_ir_off(); ir_started = DWT->CYCCNT; ir_phase = 1;
     } else if (ir_phase == 1 && elapsed_us(ir_started, kIrSettleUs)) {
         uint16_t value;
@@ -617,9 +633,10 @@ static void init_impl(bool show_menu) {
     for (unsigned i=0; i<kIrCount; ++i) {
         bool unique=true;
         for (unsigned j=0;j<kIrCount;++j)
-            if (i!=j && valid(ir[j].emitter) && ir[i].adc_channel==ir[j].adc_channel)
+            if (i!=j && ir[j].adc_channel!=kUnusedAdc &&
+                ir[i].adc_channel==ir[j].adc_channel)
                 unique=false;
-        if (ir_adc && valid(ir[i].emitter) && ir[i].adc_channel<=ADC_CHANNEL_15 && unique &&
+        if (ir_adc && ir[i].adc_channel<=ADC_CHANNEL_15 && unique &&
             (ir[i].signal_sign==1 || ir[i].signal_sign==-1) && cycles_per_us)
             live.ir_ready_mask |= 1u<<i;
     }
