@@ -11,7 +11,7 @@
 // =========== CHỌN MODULE ĐANG ĐẤU DÂY: 1 = dùng, 0 = bỏ qua ===========
 // Mặc định không sử dụng phần cứng ngoài nào, không tự quay motor.
 #define BENCH_USE_UART       0 // 1: USART3 PC10/PC11; 0: xem bench::live bằng ST-Link.
-#define BENCH_TEST_IR        1 // Chỉ test cụm IR_side: IR1 và IR5.
+#define BENCH_TEST_IR        1 // Chỉ test cụm IR_diag: IR2 và IR4.
 #define BENCH_TEST_ENCODER_L 0 // MT6701 A/B: PC6/PC7, TIM8 (module test map).
 #define BENCH_TEST_ENCODER_R 0 // MT6701 A/B: PA0/PA1, TIM5 (module test map).
 #define BENCH_TEST_MOTOR_L   0 // AT8870 IN1/IN2: PB4/PB5, TIM3 CH1/CH2.
@@ -70,11 +70,11 @@ Encoder encoders[2]={
 
 Ir ir[5]={
 #if BENCH_TEST_IR
-    {{GPIOC,GPIO_PIN_1},ADC_CHANNEL_3,+1}, // IR_1 / PA3, emitter IR_side.
-    {{nullptr,0},kUnusedAdc,+1}, // IR_2 / PA4; bỏ qua khi test IR_side.
-    {{nullptr,0},kUnusedAdc,+1}, // IR_3 / PB0; bỏ qua khi test IR_side.
-    {{nullptr,0},kUnusedAdc,+1}, // IR_4 / PB1; bỏ qua khi test IR_side.
-    {{GPIOC,GPIO_PIN_1},ADC_CHANNEL_10,+1} // IR_5 / PC0, emitter IR_side.
+    {{nullptr,0},kUnusedAdc,+1}, // IR_1 / PA3; bỏ qua khi test IR_diag.
+    {{GPIOA,GPIO_PIN_5},ADC_CHANNEL_4,+1}, // IR_2 / PA4, emitter IR_diag.
+    {{nullptr,0},kUnusedAdc,+1}, // IR_3 / PB0; bỏ qua khi test IR_diag.
+    {{GPIOA,GPIO_PIN_5},ADC_CHANNEL_9,+1}, // IR_4 / PB1, emitter IR_diag.
+    {{nullptr,0},kUnusedAdc,+1} // IR_5 / PC0; bỏ qua khi test IR_diag.
 #else
     {{nullptr,0},kUnusedAdc,+1},
     {{nullptr,0},kUnusedAdc,+1},
