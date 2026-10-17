@@ -52,8 +52,13 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
 
-  /* Configure all five analog IR channels from the reference board. */
-  GPIO_InitStruct.Pin = IR_1_Pin | IR_2_Pin | IR_diag_Pin;
+  /* Keep all IR emitter MOSFETs off until the scanner selects one group. */
+  HAL_GPIO_WritePin(IR_side_GPIO_Port, IR_side_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(IR_front_GPIO_Port, IR_front_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(IR_diag_GPIO_Port, IR_diag_Pin, GPIO_PIN_RESET);
+
+  /* Configure the five phototransistor outputs as ADC inputs. */
+  GPIO_InitStruct.Pin = IR_1_Pin | IR_2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -64,10 +69,20 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = IR_side_Pin|IR_front_Pin;
+  GPIO_InitStruct.Pin = IR_5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(IR_5_GPIO_Port, &GPIO_InitStruct);
+
+  /* IR_side, IR_front and IR_diag drive the three emitter MOSFET gates. */
+  GPIO_InitStruct.Pin = IR_side_Pin|IR_front_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = IR_diag_Pin;
+  HAL_GPIO_Init(IR_diag_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : IMU_CS_Pin */
   GPIO_InitStruct.Pin = IMU_CS_Pin;

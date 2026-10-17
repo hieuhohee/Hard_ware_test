@@ -16,7 +16,8 @@ static uint32_t motor_started, last_report, last_imu, last_encoder;
 static uint32_t old_count[2];
 static bool monitor_ir, monitor_encoder, monitor_imu;
 static uint32_t cycles_per_us;
-static unsigned ir_index, ir_phase;
+static unsigned ir_index, ir_phase, ir_scan_pos;
+static constexpr unsigned ir_scan_order[kIrCount] = {0, 4, 2, 1, 3};
 static uint32_t ir_started;
 static uint32_t ir_last_scan;
 static uint32_t calibration_started, calibration_samples;
@@ -32,6 +33,16 @@ static void pin(Pin p, bool high) {
 }
 static void all_ir_off() {
     for (unsigned i = 0; i < kIrCount; ++i) pin(ir[i].emitter, false);
+}
+static void advance_ir_index() {
+    for (unsigned attempt = 0; attempt < kIrCount; ++attempt) {
+        ir_scan_pos = (ir_scan_pos + 1) % kIrCount;
+        ir_index = ir_scan_order[ir_scan_pos];
+        if (live.ir_ready_mask & (1u << ir_index)) {
+            if (ir_scan_pos == 0) ++live.ir_frames;
+            return;
+        }
+    }
 }
 // Dùng DWT CYCCNT của Cortex-M4 để chờ thời gian IR mà không chiếm CPU bằng
 // vòng while. Hiệu unsigned xử lý được một lần tràn bộ đếm (~25 s ở 168 MHz).
@@ -115,20 +126,16 @@ static void ir_update() {
     if (ir_phase == 0) {
         if (ir_last_scan && uint32_t(HAL_GetTick()-ir_last_scan)<kIrScanIntervalMs) return;
         // Tìm kênh đã cấu hình. Mỗi pha được tiếp tục ở lần poll tiếp theo.
-        while (!(live.ir_ready_mask & (1u << ir_index))) ir_index = (ir_index+1)%kIrCount;
-        // Cấu hình mới dùng các chân ADC IR như đầu vào thụ động, không định
-        // nghĩa chân điều khiển emitter. Khi emitter rỗng, lưu mẫu thô vào on
-        // và difference (off=0) rồi chuyển sang kênh kế tiếp.
+        if (!(live.ir_ready_mask & (1u << ir_index))) advance_ir_index();
+        // Các kênh được xếp theo cụm: IR1+IR5 side, IR3 front, IR2+IR4 diag.
+        // Mỗi lần chỉ bật emitter của mắt đang đo; các MOSFET còn lại luôn tắt.
         if (!valid(ir[ir_index].emitter)) {
             uint16_t value;
             if (!adc_read(ir_index, value)) { monitor_ir=false; return; }
             live.ir_off[ir_index] = 0;
             live.ir_on[ir_index] = value;
             live.ir_difference[ir_index] = ir[ir_index].signal_sign * int32_t(value);
-            unsigned next = (ir_index+1)%kIrCount;
-            while (!(live.ir_ready_mask & (1u<<next))) next = (next+1)%kIrCount;
-            if (next <= ir_index) ++live.ir_frames;
-            ir_index = next;
+            advance_ir_index();
             ir_last_scan = HAL_GetTick();
             return;
         }
@@ -147,10 +154,7 @@ static void ir_update() {
         live.ir_on[ir_index] = value;
         live.ir_difference[ir_index] = ir[ir_index].signal_sign *
             (int32_t(value)-int32_t(live.ir_off[ir_index]));
-        unsigned next = (ir_index+1)%kIrCount;
-        while (!(live.ir_ready_mask & (1u<<next))) next = (next+1)%kIrCount;
-        if (next <= ir_index) ++live.ir_frames;
-        ir_index = next;
+        advance_ir_index();
         ir_last_scan = HAL_GetTick();
         ir_phase = 0;
     }
@@ -641,7 +645,7 @@ static void init_impl(bool show_menu) {
             live.ir_ready_mask |= 1u<<i;
     }
     live.imu_ready=imu_init();
-    ir_index=ir_phase=0; command=0;
+    ir_scan_pos=0; ir_index=ir_scan_order[0]; ir_phase=0; command=0;
     last_report=last_imu=last_encoder=HAL_GetTick();
     if (show_menu) help();
     else log("READY motor=%lu encoder=%lu IR=%lu IMU=%lu WHO=0x%02lX\r\n",
@@ -726,11 +730,10 @@ static void poll_impl(bool accept_commands) {
         (long long)live.encoder_total[0],(long long)live.encoder_total[1]);
     if (monitor_ir) for (unsigned i=0;i<kIrCount;++i)
         if (live.ir_ready_mask&(1u<<i)) {
-            if (i==2) log("IR_diag (PA5/ADC1_IN5) raw=%u diff=%ld\r\n",
-                unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
-            else if (i==0 || i==1) log("IR-%c off=%u on=%u diff=%ld\r\n",i==0?'L':'R',
-                unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
-            else log("IR%u off=%u on=%u diff=%ld\r\n",i,
+            static const char* ir_names[kIrCount] = {
+                "IR1 side", "IR2 diag", "IR3 front", "IR4 diag", "IR5 side"
+            };
+            log("%s off=%u on=%u diff=%ld\r\n",ir_names[i],
                 unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
         }
     // In raw counts để không cần bật printf float trong newlib-nano.
