@@ -18,6 +18,7 @@ static bool monitor_ir, monitor_encoder, monitor_imu;
 static uint32_t cycles_per_us;
 static unsigned ir_index, ir_phase;
 static uint32_t ir_started;
+static uint32_t ir_last_scan;
 static uint32_t calibration_started, calibration_samples;
 static float calibration_sum[3];
 
@@ -112,6 +113,7 @@ static bool adc_read(unsigned i, uint16_t& result) {
 static void ir_update() {
     if (!monitor_ir || !live.ir_ready_mask) return;
     if (ir_phase == 0) {
+        if (ir_last_scan && uint32_t(HAL_GetTick()-ir_last_scan)<kIrScanIntervalMs) return;
         // Tìm kênh đã cấu hình. Mỗi pha được tiếp tục ở lần poll tiếp theo.
         while (!(live.ir_ready_mask & (1u << ir_index))) ir_index = (ir_index+1)%kIrCount;
         all_ir_off(); ir_started = DWT->CYCCNT; ir_phase = 1;
@@ -133,6 +135,7 @@ static void ir_update() {
         while (!(live.ir_ready_mask & (1u<<next))) next = (next+1)%kIrCount;
         if (next <= ir_index) ++live.ir_frames;
         ir_index = next;
+        ir_last_scan = HAL_GetTick();
         ir_phase = 0;
     }
 }
