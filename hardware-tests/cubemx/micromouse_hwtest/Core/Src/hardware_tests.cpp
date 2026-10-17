@@ -22,7 +22,6 @@ static uint32_t calibration_started, calibration_samples;
 static float calibration_sum[3];
 
 static bool valid(Pin p) { return p.port && p.pin; }
-static bool same_pin(Pin a, Pin b) { return a.port == b.port && a.pin == b.pin; }
 static bool same_pwm(Pwm a, Pwm b) {
     return a.timer && b.timer && a.timer->Instance == b.timer->Instance &&
            a.channel == b.channel;
@@ -615,8 +614,8 @@ static void init_impl(bool show_menu) {
     for (unsigned i=0; i<kIrCount; ++i) {
         bool unique=true;
         for (unsigned j=0;j<kIrCount;++j)
-            if (i!=j && valid(ir[j].emitter) &&
-                (same_pin(ir[i].emitter,ir[j].emitter) || ir[i].adc_channel==ir[j].adc_channel)) unique=false;
+            if (i!=j && valid(ir[j].emitter) && ir[i].adc_channel==ir[j].adc_channel)
+                unique=false;
         if (ir_adc && valid(ir[i].emitter) && ir[i].adc_channel<=ADC_CHANNEL_15 && unique &&
             (ir[i].signal_sign==1 || ir[i].signal_sign==-1) && cycles_per_us)
             live.ir_ready_mask |= 1u<<i;
@@ -706,8 +705,12 @@ static void poll_impl(bool accept_commands) {
         (unsigned long)live.encoder_counter[0],(unsigned long)live.encoder_counter[1],
         (long long)live.encoder_total[0],(long long)live.encoder_total[1]);
     if (monitor_ir) for (unsigned i=0;i<kIrCount;++i)
-        if (live.ir_ready_mask&(1u<<i)) log("IR%u off=%u on=%u diff=%ld\r\n",i,
-            unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
+        if (live.ir_ready_mask&(1u<<i)) {
+            if (i==0 || i==1) log("IR-%c off=%u on=%u diff=%ld\r\n",i==0?'L':'R',
+                unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
+            else log("IR%u off=%u on=%u diff=%ld\r\n",i,
+                unsigned(live.ir_off[i]),unsigned(live.ir_on[i]),(long)live.ir_difference[i]);
+        }
     // In raw counts để không cần bật printf float trong newlib-nano.
     // Tốc độ góc deg/s và bias đã có sẵn trong biến live cho debugger.
     if (monitor_imu) log("GYRO ready=%lu samples=%lu raw=%d,%d,%d errors=%lu\r\n",
